@@ -4,10 +4,15 @@ layout: home
 nav_order: 1
 ---
 
-Welcome to my personal website!
+Welcome to my personal website.
 
-I am Satrajit Basu, a software developer with 12 years of industry experience. I am passionate about creating high-quality software solutions and solving complex problems.
+I am Satrajit Basu, a software developer with 12 years of industry experience focused on high-quality software solutions and practical problem solving.
 
-On this website, you will find information about my professional background, projects I have worked on, and my areas of expertise. Feel free to explore and get in touch if you have any questions or opportunities for collaboration.
+Use the navigation to explore:
 
-Thank you for visiting!
+- [About](/about/)
+- [Projects](/projects/)
+- [Blog](/blog/)
+- [Resources](/resources/)
+
+Thank you for visiting.
