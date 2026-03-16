@@ -11,4 +11,4 @@ This section highlights selected projects with meaningful impact and clear techn
 
 An interactive canvas experience that lets you scroll from ground level up through the atmosphere and into deep space. Features animated birds, hot air balloons, clouds, planes, satellites, UFOs, and a parallax star field — each appearing at their real-world altitude range.
 
-[Launch Altitude Scroller](/docs/projects/altitude-scroller/){: .btn .btn-blue }
+[Launch Altitude Scroller]({{ "/projects/altitude-scroller/" | relative_url }}){: .btn .btn-blue }
