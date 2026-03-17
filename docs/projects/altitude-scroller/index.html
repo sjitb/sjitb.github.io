@@ -24,15 +24,33 @@ permalink: /projects/altitude-scroller/
   #zone-label {
     font-size: 11px; letter-spacing: 5px; text-transform: uppercase;
     color: rgba(255,255,255,0.4); margin-top: 4px;
-    transition: opacity 0.5s;
+    transition: color 0.3s, transform 0.3s;
+  }
+  #zone-label.flash {
+    color: rgba(255,255,255,0.85);
+    transform: scale(1.08);
   }
   #hint {
     position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%);
     font-size: 11px; letter-spacing: 4px; text-transform: uppercase;
     color: rgba(255,255,255,0.35); pointer-events: none;
     animation: pulse 2s ease-in-out infinite;
+    transition: opacity 0.5s;
   }
   @keyframes pulse { 0%,100%{opacity:0.35} 50%{opacity:0.7} }
+  #altitude-bar {
+    position: fixed; right: 16px; top: 50%; transform: translateY(-50%);
+    width: 4px; height: 60vh; border-radius: 2px;
+    background: rgba(255,255,255,0.08); pointer-events: none; z-index: 10;
+  }
+  #altitude-bar-fill {
+    position: absolute; bottom: 0; left: 0; width: 100%; border-radius: 2px;
+    background: rgba(255,255,255,0.3); transition: height 0.15s;
+  }
+  #altitude-bar-marker {
+    position: absolute; left: -3px; width: 10px; height: 3px; border-radius: 1px;
+    background: rgba(255,255,255,0.7); transition: bottom 0.15s;
+  }
 </style>
 </head>
 <body>
@@ -40,7 +58,11 @@ permalink: /projects/altitude-scroller/
   <div id="altitude-display">0 m</div>
   <div id="zone-label">Ground Level</div>
 </div>
-<div id="hint">scroll or drag to ascend ↕</div>
+<div id="hint">scroll or drag to ascend &#8597;</div>
+<div id="altitude-bar">
+  <div id="altitude-bar-fill"></div>
+  <div id="altitude-bar-marker"></div>
+</div>
 <canvas id="c"></canvas>
 <script>
 const canvas = document.getElementById('c');
@@ -55,276 +77,51 @@ resize();
 window.addEventListener('resize', resize);
 
 // ─── STATE ───────────────────────────────────────────────────────────────────
-let altitude = 0;          // meters
-let velocity = 0;          // m/frame
+let altitude = 0;
+let velocity = 0;
 let time = 0;
 
-// ─── ZONES ───────────────────────────────────────────────────────────────────
-const ZONES = [
-  { alt: 0,       label: 'Ground Level',        sky1: '#6baed6', sky2: '#c6e4f5', ground: true  },
-  { alt: 300,     label: 'Low Altitude',         sky1: '#5a9fc8', sky2: '#a8d4ee', ground: false },
-  { alt: 3000,    label: 'Bird Territory',       sky1: '#4a8ab5', sky2: '#7ec3e8', ground: false },
-  { alt: 8000,    label: 'Hot Air Balloon Zone', sky1: '#3a74a0', sky2: '#5aaad4', ground: false },
-  { alt: 18000,   label: 'Above the Clouds',     sky1: '#2a5f8a', sky2: '#3a85b8', ground: false },
-  { alt: 32000,   label: 'Cruising Altitude',    sky1: '#1a3f65', sky2: '#2a60a0', ground: false },
-  { alt: 80000,   label: 'Stratosphere',         sky1: '#0d2040', sky2: '#1a3060', ground: false },
-  { alt: 200000,  label: 'Edge of Space',        sky1: '#050d1a', sky2: '#0a1830', ground: false },
-  { alt: 400000,  label: 'Low Earth Orbit',      sky1: '#020810', sky2: '#050d20', ground: false },
-  { alt: 800000,  label: 'Deep Space',           sky1: '#010305', sky2: '#020810', ground: false },
-  { alt: 1500000, label: '👽  They\'re Here',    sky1: '#000205', sky2: '#010510', ground: false },
-];
-
 // ─── SEEDED RANDOM ────────────────────────────────────────────────────────────
-function seededRand(seed) {
+function sr(seed) {
   let s = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
   return s - Math.floor(s);
 }
 
-// ─── ENTITY DEFINITIONS ──────────────────────────────────────────────────────
-// Each entity type: { altMin, altMax, count, draw(ctx, x, y, t, seed) }
-
-function drawBird(ctx, x, y, t, seed) {
-  const flap = Math.sin(t * 0.08 + seed * 10) * 4;
-  const scale = 0.6 + seededRand(seed * 3) * 0.8;
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(scale, scale);
-  ctx.strokeStyle = `rgba(30,20,10,${0.5 + seededRand(seed)*0.4})`;
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(-10, flap);
-  ctx.quadraticCurveTo(0, -Math.abs(flap) - 2, 10, flap);
-  ctx.stroke();
-  ctx.restore();
+// ─── VIEWPORT SCALING ─────────────────────────────────────────────────────────
+// Returns how many meters of world the screen height represents.
+// Near ground ~300m (detailed), grows so space feels vast.
+function getViewRange() {
+  if (altitude <= 0) return 300;
+  return 300 + altitude * 0.12 + Math.pow(altitude, 0.85) * 0.02;
 }
 
-function drawBirdFlock(ctx, x, y, t, seed) {
-  for (let i = 0; i < 7; i++) {
-    const ox = seededRand(seed + i * 7.3) * 60 - 30;
-    const oy = seededRand(seed + i * 3.1) * 30 - 15;
-    drawBird(ctx, x + ox, y + oy, t + i * 5, seed + i);
-  }
+// Convert world altitude to screen Y. Higher worldAlt = higher on screen = lower Y.
+function worldToScreen(worldAlt) {
+  const vr = getViewRange();
+  const metersPerPx = vr / H;
+  return H / 2 - (worldAlt - altitude) / metersPerPx;
 }
 
-function drawBalloon(ctx, x, y, t, seed) {
-  const sway = Math.sin(t * 0.02 + seed) * 3;
-  const colors = [
-    ['#e74c3c','#c0392b'], ['#e67e22','#d35400'], ['#27ae60','#1e8449'],
-    ['#8e44ad','#6c3483'], ['#f39c12','#d68910'], ['#16a085','#117a65']
-  ];
-  const ci = Math.floor(seededRand(seed * 11) * colors.length);
-  const [c1, c2] = colors[ci];
-  const scale = 0.7 + seededRand(seed * 5) * 0.6;
-  ctx.save();
-  ctx.translate(x + sway, y);
-  ctx.scale(scale, scale);
-  // balloon
-  const grad = ctx.createRadialGradient(-8, -12, 2, 0, -5, 30);
-  grad.addColorStop(0, '#fff');
-  grad.addColorStop(0.3, c1);
-  grad.addColorStop(1, c2);
-  ctx.beginPath();
-  ctx.ellipse(0, -10, 22, 28, 0, 0, Math.PI * 2);
-  ctx.fillStyle = grad;
-  ctx.fill();
-  // stripes
-  ctx.strokeStyle = 'rgba(0,0,0,0.1)';
-  ctx.lineWidth = 1;
-  for (let s = -20; s < 25; s += 8) {
-    ctx.beginPath();
-    ctx.moveTo(s, -35);
-    ctx.lineTo(s - 5, 18);
-    ctx.stroke();
-  }
-  // basket lines
-  ctx.strokeStyle = 'rgba(100,70,30,0.8)';
-  ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(-10, 18); ctx.lineTo(-6, 30); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(10, 18); ctx.lineTo(6, 30); ctx.stroke();
-  // basket
-  ctx.fillStyle = '#8B6914';
-  ctx.fillRect(-8, 30, 16, 10);
-  ctx.strokeStyle = 'rgba(0,0,0,0.3)';
-  ctx.strokeRect(-8, 30, 16, 10);
-  ctx.restore();
-}
-
-function drawCloud(ctx, x, y, t, seed) {
-  const scale = 0.8 + seededRand(seed * 7) * 1.4;
-  const alpha = 0.7 + seededRand(seed * 3) * 0.25;
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(scale, scale * 0.6);
-  ctx.fillStyle = `rgba(255,255,255,${alpha})`;
-  const blobs = [
-    [0, 0, 35], [-30, 8, 25], [30, 8, 28], [-55, 15, 18], [55, 15, 18],
-    [-15, -12, 22], [15, -10, 26]
-  ];
-  blobs.forEach(([bx, by, r]) => {
-    const off = Math.floor(seededRand(seed + bx) * 10) - 5;
-    ctx.beginPath();
-    ctx.arc(bx + off, by, r, 0, Math.PI * 2);
-    ctx.fill();
-  });
-  ctx.restore();
-}
-
-function drawPlane(ctx, x, y, t, seed) {
-  const dir = seededRand(seed) > 0.5 ? 1 : -1;
-  const px = x + ((t * 0.3 * dir + seed * 500) % (W + 300)) - 150;
-  const scale = 0.7 + seededRand(seed * 2) * 0.5;
-  ctx.save();
-  ctx.translate(px, y);
-  ctx.scale(dir * scale, scale);
-  ctx.fillStyle = 'rgba(220,225,235,0.9)';
-  // fuselage
-  ctx.beginPath();
-  ctx.ellipse(0, 0, 38, 7, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // nose
-  ctx.beginPath();
-  ctx.moveTo(38, 0); ctx.lineTo(52, 2); ctx.lineTo(38, 4);
-  ctx.fillStyle = 'rgba(180,190,210,0.9)';
-  ctx.fill();
-  // wings
-  ctx.beginPath();
-  ctx.moveTo(-5, 0); ctx.lineTo(-20, -32); ctx.lineTo(-30, -32); ctx.lineTo(-18, 0);
-  ctx.fillStyle = 'rgba(200,210,225,0.85)';
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(-5, 0); ctx.lineTo(-20, 32); ctx.lineTo(-30, 32); ctx.lineTo(-18, 0);
-  ctx.fill();
-  // tail
-  ctx.beginPath();
-  ctx.moveTo(-30, 0); ctx.lineTo(-38, -14); ctx.lineTo(-42, -14); ctx.lineTo(-35, 0);
-  ctx.fillStyle = 'rgba(180,190,210,0.9)';
-  ctx.fill();
-  // windows
-  ctx.fillStyle = 'rgba(120,170,220,0.8)';
-  for (let w = -15; w < 25; w += 7) {
-    ctx.beginPath();
-    ctx.ellipse(w, -1, 2.5, 3, 0, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  // contrail
-  const grad = ctx.createLinearGradient(-50 * dir, 0, -120 * dir, 0);
-  grad.addColorStop(0, 'rgba(255,255,255,0.4)');
-  grad.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = grad;
-  ctx.fillRect(-50 * dir, -2, -70 * dir, 4);
-  ctx.restore();
-}
-
-function drawSatellite(ctx, x, y, t, seed) {
-  const angle = t * 0.01 + seed * 5;
-  const orbitX = x + Math.cos(t * 0.005 + seed) * 80;
-  const orbitY = y + Math.sin(t * 0.007 + seed) * 20;
-  ctx.save();
-  ctx.translate(orbitX, orbitY);
-  ctx.rotate(angle);
-  // body
-  ctx.fillStyle = 'rgba(180,190,210,0.9)';
-  ctx.fillRect(-15, -8, 30, 16);
-  ctx.strokeStyle = 'rgba(100,120,150,0.6)';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(-15, -8, 30, 16);
-  // solar panels
-  ctx.fillStyle = 'rgba(30,60,140,0.85)';
-  ctx.fillRect(-50, -5, 28, 10);
-  ctx.fillRect(22, -5, 28, 10);
-  // panel grid
-  ctx.strokeStyle = 'rgba(60,100,200,0.4)';
-  ctx.lineWidth = 0.5;
-  for (let px = -50; px < -22; px += 7) {
-    ctx.beginPath(); ctx.moveTo(px, -5); ctx.lineTo(px, 5); ctx.stroke();
-  }
-  for (let px = 22; px < 50; px += 7) {
-    ctx.beginPath(); ctx.moveTo(px, -5); ctx.lineTo(px, 5); ctx.stroke();
-  }
-  // antenna
-  ctx.strokeStyle = 'rgba(200,210,230,0.8)';
-  ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(0, -8); ctx.lineTo(0, -20); ctx.stroke();
-  ctx.beginPath(); ctx.arc(0, -20, 3, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(200,210,230,0.8)';
-  ctx.fill();
-  ctx.restore();
-}
-
-function drawUFO(ctx, x, y, t, seed) {
-  const hover = Math.sin(t * 0.03 + seed * 3) * 6;
-  const pulse = 0.7 + Math.sin(t * 0.05 + seed) * 0.3;
-  ctx.save();
-  ctx.translate(x, y + hover);
-  const scale = 0.8 + seededRand(seed * 2) * 0.7;
-  ctx.scale(scale, scale);
-  // glow beam
-  const beamGrad = ctx.createRadialGradient(0, 20, 2, 0, 20, 60);
-  beamGrad.addColorStop(0, `rgba(100,255,150,${0.15 * pulse})`);
-  beamGrad.addColorStop(1, 'rgba(100,255,150,0)');
-  ctx.beginPath();
-  ctx.moveTo(-20, 10); ctx.lineTo(-50, 80); ctx.lineTo(50, 80); ctx.lineTo(20, 10);
-  ctx.fillStyle = beamGrad;
-  ctx.fill();
-  // saucer bottom
-  const bodyGrad = ctx.createLinearGradient(0, 5, 0, 18);
-  bodyGrad.addColorStop(0, '#888');
-  bodyGrad.addColorStop(1, '#444');
-  ctx.beginPath();
-  ctx.ellipse(0, 12, 50, 10, 0, 0, Math.PI * 2);
-  ctx.fillStyle = bodyGrad;
-  ctx.fill();
-  // saucer dome
-  const domeGrad = ctx.createRadialGradient(-10, -5, 2, 0, 0, 30);
-  domeGrad.addColorStop(0, 'rgba(180,255,200,0.9)');
-  domeGrad.addColorStop(0.5, 'rgba(80,200,120,0.8)');
-  domeGrad.addColorStop(1, 'rgba(30,80,50,0.9)');
-  ctx.beginPath();
-  ctx.ellipse(0, 5, 30, 20, 0, 0, Math.PI * 2);
-  ctx.fillStyle = domeGrad;
-  ctx.fill();
-  // lights
-  const lightColors = ['#ff4444','#ffff44','#44ffff','#44ff44'];
-  for (let l = 0; l < 6; l++) {
-    const langle = (l / 6) * Math.PI * 2 + t * 0.04;
-    const lx = Math.cos(langle) * 38;
-    const ly = Math.sin(langle) * 6 + 12;
-    const lc = lightColors[l % lightColors.length];
-    ctx.beginPath();
-    ctx.arc(lx, ly, 3, 0, Math.PI * 2);
-    ctx.fillStyle = lc;
-    ctx.shadowBlur = 8;
-    ctx.shadowColor = lc;
-    ctx.fill();
-    ctx.shadowBlur = 0;
-  }
-  ctx.restore();
-}
-
-function drawStar(ctx, x, y, brightness, size) {
-  ctx.beginPath();
-  ctx.arc(x, y, size, 0, Math.PI * 2);
-  ctx.fillStyle = `rgba(255,255,255,${brightness})`;
-  ctx.fill();
-}
-
-// ─── STARS ────────────────────────────────────────────────────────────────────
-const STARS = Array.from({length: 300}, (_, i) => ({
-  x: seededRand(i * 17.3) * 2,
-  y: seededRand(i * 31.7),
-  size: 0.5 + seededRand(i * 7.1) * 1.5,
-  twinkle: seededRand(i * 3.9) * Math.PI * 2,
-}));
-
-// ─── ENTITY LAYERS ────────────────────────────────────────────────────────────
-const LAYERS = [
-  { type: 'bird-flock', altMin: 200,   altMax: 9000,   count: 8,  drawFn: drawBirdFlock },
-  { type: 'balloon',    altMin: 3000,  altMax: 14000,  count: 5,  drawFn: drawBalloon   },
-  { type: 'cloud',      altMin: 5000,  altMax: 50000,  count: 12, drawFn: drawCloud     },
-  { type: 'plane',      altMin: 28000, altMax: 50000,  count: 4,  drawFn: drawPlane     },
-  { type: 'satellite',  altMin: 200000,altMax: 900000, count: 6,  drawFn: drawSatellite },
-  { type: 'ufo',        altMin: 900000,altMax: 3000000,count: 5,  drawFn: drawUFO       },
+// ─── ZONES ───────────────────────────────────────────────────────────────────
+const ZONES = [
+  { alt: 0,       label: 'Ground Level' },
+  { alt: 300,     label: 'Low Altitude' },
+  { alt: 3000,    label: 'Bird Territory' },
+  { alt: 8000,    label: 'Hot Air Balloon Zone' },
+  { alt: 18000,   label: 'Above the Clouds' },
+  { alt: 32000,   label: 'Cruising Altitude' },
+  { alt: 80000,   label: 'Stratosphere' },
+  { alt: 200000,  label: 'Edge of Space' },
+  { alt: 400000,  label: 'Low Earth Orbit' },
+  { alt: 800000,  label: 'Deep Space' },
+  { alt: 1500000, label: '\u{1F47D}  They\'re Here' },
 ];
+
+function getCurrentZone(alt) {
+  let z = ZONES[0];
+  for (const zone of ZONES) { if (alt >= zone.alt) z = zone; }
+  return z;
+}
 
 // ─── SKY GRADIENT ─────────────────────────────────────────────────────────────
 const SKY_STOPS = [
@@ -344,144 +141,677 @@ function lerpColor(c1, c2, t) {
   const p = (h) => parseInt(h.slice(1), 16);
   const r1 = (p(c1) >> 16) & 0xff, g1 = (p(c1) >> 8) & 0xff, b1 = p(c1) & 0xff;
   const r2 = (p(c2) >> 16) & 0xff, g2 = (p(c2) >> 8) & 0xff, b2 = p(c2) & 0xff;
-  const r = Math.round(r1 + (r2 - r1) * t);
-  const g = Math.round(g1 + (g2 - g1) * t);
-  const b = Math.round(b1 + (b2 - b1) * t);
-  return `rgb(${r},${g},${b})`;
+  return `rgb(${Math.round(r1+(r2-r1)*t)},${Math.round(g1+(g2-g1)*t)},${Math.round(b1+(b2-b1)*t)})`;
 }
 
 function getSkyColors(alt) {
   let i = 0;
-  while (i < SKY_STOPS.length - 2 && alt > SKY_STOPS[i + 1].alt) i++;
-  const s0 = SKY_STOPS[i], s1 = SKY_STOPS[i + 1];
+  while (i < SKY_STOPS.length - 2 && alt > SKY_STOPS[i+1].alt) i++;
+  const s0 = SKY_STOPS[i], s1 = SKY_STOPS[i+1];
   const t = Math.max(0, Math.min(1, (alt - s0.alt) / (s1.alt - s0.alt)));
-  return {
-    top: lerpColor(s0.top, s1.top, t),
-    bot: lerpColor(s0.bot, s1.bot, t),
-  };
+  return { top: lerpColor(s0.top, s1.top, t), bot: lerpColor(s0.bot, s1.bot, t) };
 }
 
-// ─── ZONE LABEL ───────────────────────────────────────────────────────────────
-function getCurrentZone(alt) {
-  let z = ZONES[0];
-  for (const zone of ZONES) { if (alt >= zone.alt) z = zone; }
-  return z;
+// ─── PROCEDURAL CHUNK SYSTEM ──────────────────────────────────────────────────
+// Entity types: altitude range + density controls how many spawn per chunk.
+const ENTITY_TYPES = [
+  { type: 'tower',      altMin: 0,       altMax: 200,     density: 0.8,  drawFn: drawTower },
+  { type: 'flock',      altMin: 100,     altMax: 8000,    density: 0.5,  drawFn: drawBirdFlock },
+  { type: 'eagle',      altMin: 2000,    altMax: 12000,   density: 0.25, drawFn: drawEagle },
+  { type: 'balloon',    altMin: 3000,    altMax: 14000,   density: 0.3,  drawFn: drawBalloon },
+  { type: 'cloud',      altMin: 1500,    altMax: 12000,   density: 0.7,  drawFn: drawCloudFluffy },
+  { type: 'cloud-high', altMin: 10000,   altMax: 45000,   density: 0.5,  drawFn: drawCloudWispy },
+  { type: 'plane',      altMin: 28000,   altMax: 42000,   density: 0.2,  drawFn: drawPlane },
+  { type: 'icecrystal', altMin: 40000,   altMax: 90000,   density: 0.6,  drawFn: drawIceCrystal },
+  { type: 'satellite',  altMin: 200000,  altMax: 900000,  density: 0.15, drawFn: drawSatellite },
+  { type: 'debris',     altMin: 300000,  altMax: 800000,  density: 0.4,  drawFn: drawDebris },
+  { type: 'ufo',        altMin: 900000,  altMax: 5000000, density: 0.2,  drawFn: drawUFO },
+  { type: 'aliensign',  altMin: 1200000, altMax: 5000000, density: 0.12, drawFn: drawAlienSign },
+];
+
+const chunkCache = new Map();
+const MAX_CACHE = 80;
+
+function getChunkSize(alt) {
+  if (alt < 500)     return 150;
+  if (alt < 5000)    return 800;
+  if (alt < 50000)   return 5000;
+  if (alt < 200000)  return 30000;
+  if (alt < 1000000) return 100000;
+  return 400000;
 }
 
-// ─── DRAW GROUND ──────────────────────────────────────────────────────────────
-function drawGround(ctx, altitude) {
-  if (altitude > 2000) return;
-  const groundY = H * 0.75 + (altitude / 2000) * H * 0.5;
-  // ground
-  const gGrad = ctx.createLinearGradient(0, groundY, 0, H);
-  gGrad.addColorStop(0, '#5a8a3a');
-  gGrad.addColorStop(0.1, '#4a7830');
-  gGrad.addColorStop(0.4, '#8B6914');
-  gGrad.addColorStop(1, '#5a4010');
-  ctx.fillStyle = gGrad;
-  ctx.fillRect(0, groundY, W, H - groundY);
-  // trees silhouette
-  if (altitude < 800) {
-    const treeAlpha = Math.max(0, 1 - altitude / 800);
-    ctx.fillStyle = `rgba(30,50,20,${treeAlpha})`;
-    for (let tx = 0; tx < W + 60; tx += 45) {
-      const th = 30 + seededRand(tx * 0.01) * 40;
-      const tw = 18 + seededRand(tx * 0.02) * 12;
-      ctx.beginPath();
-      ctx.moveTo(tx - tw / 2, groundY);
-      ctx.lineTo(tx, groundY - th);
-      ctx.lineTo(tx + tw / 2, groundY);
-      ctx.fill();
+function getChunkEntities(chunkAlt, chunkSize) {
+  const key = chunkAlt + '|' + chunkSize;
+  if (chunkCache.has(key)) return chunkCache.get(key);
+
+  if (chunkCache.size > MAX_CACHE) {
+    const first = chunkCache.keys().next().value;
+    chunkCache.delete(first);
+  }
+
+  const entities = [];
+  const chunkSeed = chunkAlt * 0.001 + chunkSize * 0.0001;
+
+  for (const etype of ENTITY_TYPES) {
+    const overlapMin = Math.max(chunkAlt, etype.altMin);
+    const overlapMax = Math.min(chunkAlt + chunkSize, etype.altMax);
+    if (overlapMin >= overlapMax) continue;
+
+    const overlapFrac = (overlapMax - overlapMin) / (etype.altMax - etype.altMin);
+    const totalForType = Math.ceil(etype.density * (etype.altMax - etype.altMin) / chunkSize);
+    const countHere = Math.max(1, Math.round(totalForType * overlapFrac));
+    const capped = Math.min(countHere, 6);
+
+    for (let i = 0; i < capped; i++) {
+      const seed = sr(chunkSeed + i * 137.5 + etype.type.length * 17.3) * 99999;
+      entities.push({
+        type: etype.type,
+        drawFn: etype.drawFn,
+        worldAlt: overlapMin + sr(seed + 1) * (overlapMax - overlapMin),
+        worldX: sr(seed + 2),
+        seed: seed,
+      });
+    }
+  }
+
+  chunkCache.set(key, entities);
+  return entities;
+}
+
+// ─── DRAW FUNCTIONS ───────────────────────────────────────────────────────────
+
+function drawTower(ctx, x, y, t, seed) {
+  const s = 0.6 + sr(seed * 3) * 0.6;
+  const h = (50 + sr(seed * 7) * 60) * s;
+  const w = (8 + sr(seed * 11) * 10) * s;
+  const kind = Math.floor(sr(seed * 13) * 3);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.globalAlpha = 0.7;
+  if (kind === 0) {
+    // Radio tower
+    ctx.strokeStyle = 'rgba(80,80,80,0.8)'; ctx.lineWidth = 2 * s;
+    ctx.beginPath();
+    ctx.moveTo(0, 0); ctx.lineTo(0, -h);
+    ctx.moveTo(-w, 0); ctx.lineTo(0, -h * 0.7); ctx.lineTo(w, 0);
+    ctx.moveTo(-w * 0.5, -h * 0.3); ctx.lineTo(w * 0.5, -h * 0.3);
+    ctx.stroke();
+    if (Math.sin(t * 0.06 + seed) > 0.3) {
+      ctx.fillStyle = '#ff3333'; ctx.shadowBlur = 6; ctx.shadowColor = '#ff3333';
+      ctx.beginPath(); ctx.arc(0, -h, 2 * s, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+  } else if (kind === 1) {
+    // Water tower
+    ctx.fillStyle = 'rgba(120,130,140,0.7)';
+    ctx.fillRect(-w * 0.3, -h, w * 0.6, h);
+    ctx.beginPath(); ctx.ellipse(0, -h, w * 1.2, w * 0.8, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(140,150,160,0.8)'; ctx.fill();
+  } else {
+    // Church steeple
+    ctx.fillStyle = 'rgba(100,80,60,0.7)';
+    ctx.fillRect(-w * 0.5, -h * 0.6, w, h * 0.6);
+    ctx.beginPath();
+    ctx.moveTo(-w * 0.6, -h * 0.6); ctx.lineTo(0, -h); ctx.lineTo(w * 0.6, -h * 0.6);
+    ctx.fillStyle = 'rgba(80,60,40,0.8)'; ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function drawBird(ctx, x, y, t, seed) {
+  const flap = Math.sin(t * 0.08 + seed * 10) * 4;
+  const s = 0.6 + sr(seed * 3) * 0.8;
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.strokeStyle = `rgba(30,20,10,${0.5 + sr(seed) * 0.4})`;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(-10, flap); ctx.quadraticCurveTo(0, -Math.abs(flap) - 2, 10, flap);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBirdFlock(ctx, x, y, t, seed) {
+  const drift = (t * 0.15 + sr(seed + 100) * 2000) % (W + 200) - 100;
+  for (let i = 0; i < 7; i++) {
+    const ox = sr(seed + i * 7.3) * 60 - 30;
+    const oy = sr(seed + i * 3.1) * 30 - 15;
+    drawBird(ctx, drift + ox, y + oy, t + i * 5, seed + i);
+  }
+}
+
+function drawEagle(ctx, x, y, t, seed) {
+  const flap = Math.sin(t * 0.03 + seed * 5) * 6;
+  const glide = Math.cos(t * 0.01 + seed) * 20;
+  ctx.save(); ctx.translate(x + glide, y);
+  ctx.strokeStyle = 'rgba(50,30,10,0.7)'; ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(-20, flap);
+  ctx.quadraticCurveTo(-5, -Math.abs(flap) - 5, 0, 0);
+  ctx.quadraticCurveTo(5, -Math.abs(flap) - 5, 20, flap);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(50,30,10,0.5)';
+  ctx.beginPath(); ctx.ellipse(0, 1, 5, 3, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+function drawBalloon(ctx, x, y, t, seed) {
+  const sway = Math.sin(t * 0.015 + seed) * 4;
+  const bob = Math.sin(t * 0.008 + seed * 2) * 3;
+  const colors = [
+    ['#e74c3c','#c0392b'], ['#e67e22','#d35400'], ['#27ae60','#1e8449'],
+    ['#8e44ad','#6c3483'], ['#f39c12','#d68910'], ['#16a085','#117a65']
+  ];
+  const ci = Math.floor(sr(seed * 11) * colors.length);
+  const [c1, c2] = colors[ci];
+  const s = 0.7 + sr(seed * 5) * 0.6;
+  ctx.save(); ctx.translate(x + sway, y + bob); ctx.scale(s, s);
+  // envelope
+  const grad = ctx.createRadialGradient(-8, -12, 2, 0, -5, 30);
+  grad.addColorStop(0, '#fff'); grad.addColorStop(0.3, c1); grad.addColorStop(1, c2);
+  ctx.beginPath(); ctx.ellipse(0, -10, 22, 28, 0, 0, Math.PI * 2);
+  ctx.fillStyle = grad; ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.1)'; ctx.lineWidth = 1;
+  for (let st = -20; st < 25; st += 8) { ctx.beginPath(); ctx.moveTo(st, -35); ctx.lineTo(st - 5, 18); ctx.stroke(); }
+  // rigging & basket
+  ctx.strokeStyle = 'rgba(100,70,30,0.8)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(-10, 18); ctx.lineTo(-6, 30); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(10, 18); ctx.lineTo(6, 30); ctx.stroke();
+  ctx.fillStyle = '#8B6914'; ctx.fillRect(-8, 30, 16, 10);
+  ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.strokeRect(-8, 30, 16, 10);
+  // burner flame
+  const flicker = 0.5 + Math.sin(t * 0.2 + seed) * 0.5;
+  ctx.fillStyle = `rgba(255,${Math.round(120 + flicker * 80)},30,${0.5 + flicker * 0.3})`;
+  ctx.beginPath(); ctx.arc(0, 20, 3, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+function drawCloudFluffy(ctx, x, y, t, seed) {
+  const s = 0.8 + sr(seed * 7) * 1.4;
+  const alpha = 0.6 + sr(seed * 3) * 0.3;
+  const drift = Math.sin(t * 0.003 + seed * 2) * 15;
+  ctx.save(); ctx.translate(x + drift, y); ctx.scale(s, s * 0.55);
+  ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+  [[0,0,35],[-30,8,25],[30,8,28],[-55,15,18],[55,15,18],[-15,-12,22],[15,-10,26]]
+    .forEach(([bx, by, r]) => {
+      ctx.beginPath(); ctx.arc(bx + sr(seed + bx) * 8 - 4, by, r, 0, Math.PI * 2); ctx.fill();
+    });
+  ctx.restore();
+}
+
+function drawCloudWispy(ctx, x, y, t, seed) {
+  const s = 1.0 + sr(seed * 5) * 1.5;
+  const alpha = 0.2 + sr(seed * 9) * 0.2;
+  const drift = Math.sin(t * 0.002 + seed) * 20;
+  ctx.save(); ctx.translate(x + drift, y); ctx.scale(s, s * 0.15);
+  ctx.strokeStyle = `rgba(255,255,255,${alpha})`; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-80, 0);
+  ctx.bezierCurveTo(-40, -10 + sr(seed) * 15, 40, 10 - sr(seed + 1) * 15, 80, 0);
+  ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-60, 12);
+  ctx.bezierCurveTo(-20, 5, 30, 18, 70, 8);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawPlane(ctx, x, y, t, seed) {
+  const dir = sr(seed) > 0.5 ? 1 : -1;
+  const speed = 0.3 + sr(seed + 5) * 0.15;
+  const px = ((t * speed * dir + sr(seed + 10) * 3000) % (W + 400)) - 200;
+  const s = 0.7 + sr(seed * 2) * 0.5;
+  ctx.save(); ctx.translate(px, y); ctx.scale(dir * s, s);
+  // fuselage
+  ctx.fillStyle = 'rgba(220,225,235,0.9)';
+  ctx.beginPath(); ctx.ellipse(0, 0, 38, 7, 0, 0, Math.PI * 2); ctx.fill();
+  // nose
+  ctx.beginPath(); ctx.moveTo(38, 0); ctx.lineTo(52, 2); ctx.lineTo(38, 4);
+  ctx.fillStyle = 'rgba(180,190,210,0.9)'; ctx.fill();
+  // wings
+  ctx.fillStyle = 'rgba(200,210,225,0.85)';
+  ctx.beginPath(); ctx.moveTo(-5, 0); ctx.lineTo(-20, -32); ctx.lineTo(-30, -32); ctx.lineTo(-18, 0); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-5, 0); ctx.lineTo(-20, 32); ctx.lineTo(-30, 32); ctx.lineTo(-18, 0); ctx.fill();
+  // tail
+  ctx.beginPath(); ctx.moveTo(-30, 0); ctx.lineTo(-38, -14); ctx.lineTo(-42, -14); ctx.lineTo(-35, 0);
+  ctx.fillStyle = 'rgba(180,190,210,0.9)'; ctx.fill();
+  // windows
+  ctx.fillStyle = 'rgba(120,170,220,0.8)';
+  for (let w = -15; w < 25; w += 7) { ctx.beginPath(); ctx.ellipse(w, -1, 2.5, 3, 0, 0, Math.PI * 2); ctx.fill(); }
+  // contrail
+  const cGrad = ctx.createLinearGradient(-42, 0, -200, 0);
+  cGrad.addColorStop(0, 'rgba(255,255,255,0.5)'); cGrad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = cGrad; ctx.fillRect(-42, -2, -160, 4);
+  ctx.restore();
+}
+
+function drawIceCrystal(ctx, x, y, t, seed) {
+  const s = 0.3 + sr(seed * 3) * 0.5;
+  const ang = t * 0.01 + seed;
+  const alpha = 0.3 + sr(seed * 7) * 0.3;
+  const drift = Math.sin(t * 0.005 + seed) * 30;
+  ctx.save(); ctx.translate(x + drift, y); ctx.rotate(ang); ctx.scale(s, s);
+  ctx.strokeStyle = `rgba(200,220,255,${alpha})`; ctx.lineWidth = 1;
+  for (let a = 0; a < 6; a++) {
+    const ra = (a / 6) * Math.PI * 2;
+    const ex = Math.cos(ra) * 15, ey = Math.sin(ra) * 15;
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(ex, ey); ctx.stroke();
+    const bx = Math.cos(ra) * 9, by = Math.sin(ra) * 9;
+    ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(bx + Math.cos(ra + 0.5) * 5, by + Math.sin(ra + 0.5) * 5); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(bx + Math.cos(ra - 0.5) * 5, by + Math.sin(ra - 0.5) * 5); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawSatellite(ctx, x, y, t, seed) {
+  const angle = t * 0.008 + seed * 5;
+  const orbitR = 30 + sr(seed) * 50;
+  const ox = Math.cos(t * 0.004 + seed) * orbitR;
+  const oy = Math.sin(t * 0.006 + seed) * orbitR * 0.3;
+  ctx.save(); ctx.translate(x + ox, y + oy); ctx.rotate(angle);
+  ctx.fillStyle = 'rgba(180,190,210,0.9)'; ctx.fillRect(-12, -6, 24, 12);
+  ctx.strokeStyle = 'rgba(100,120,150,0.6)'; ctx.lineWidth = 1; ctx.strokeRect(-12, -6, 24, 12);
+  ctx.fillStyle = 'rgba(30,60,140,0.85)'; ctx.fillRect(-42, -4, 24, 8); ctx.fillRect(18, -4, 24, 8);
+  ctx.strokeStyle = 'rgba(60,100,200,0.4)'; ctx.lineWidth = 0.5;
+  for (let px = -42; px < -18; px += 6) { ctx.beginPath(); ctx.moveTo(px, -4); ctx.lineTo(px, 4); ctx.stroke(); }
+  for (let px = 18; px < 42; px += 6) { ctx.beginPath(); ctx.moveTo(px, -4); ctx.lineTo(px, 4); ctx.stroke(); }
+  ctx.strokeStyle = 'rgba(200,210,230,0.8)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, -6); ctx.lineTo(0, -16); ctx.stroke();
+  ctx.beginPath(); ctx.arc(0, -16, 2.5, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(200,210,230,0.8)'; ctx.fill();
+  // solar reflection glint
+  const glint = Math.sin(t * 0.02 + seed * 3);
+  if (glint > 0.8) {
+    ctx.fillStyle = `rgba(255,255,255,${(glint - 0.8) * 5})`;
+    ctx.beginPath(); ctx.arc(25, 0, 4, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawDebris(ctx, x, y, t, seed) {
+  const tumble = t * 0.03 + seed * 10;
+  const s = 1 + sr(seed) * 2;
+  const drift = Math.sin(t * 0.002 + seed) * 15;
+  ctx.save(); ctx.translate(x + drift, y); ctx.rotate(tumble);
+  const b = 0.3 + Math.abs(Math.sin(t * 0.01 + seed * 7)) * 0.5;
+  ctx.fillStyle = `rgba(${Math.round(180*b)},${Math.round(190*b)},${Math.round(210*b)},0.8)`;
+  ctx.fillRect(-s, -s * 0.5, s * 2, s);
+  ctx.restore();
+}
+
+function drawUFO(ctx, x, y, t, seed) {
+  const hover = Math.sin(t * 0.03 + seed * 3) * 6;
+  const pulse = 0.7 + Math.sin(t * 0.05 + seed) * 0.3;
+  const s = 0.8 + sr(seed * 2) * 0.7;
+  ctx.save(); ctx.translate(x, y + hover); ctx.scale(s, s);
+  // tractor beam
+  const beamGrad = ctx.createRadialGradient(0, 20, 2, 0, 20, 60);
+  beamGrad.addColorStop(0, `rgba(100,255,150,${0.12 * pulse})`);
+  beamGrad.addColorStop(1, 'rgba(100,255,150,0)');
+  ctx.beginPath();
+  ctx.moveTo(-20, 10); ctx.lineTo(-50, 80); ctx.lineTo(50, 80); ctx.lineTo(20, 10);
+  ctx.fillStyle = beamGrad; ctx.fill();
+  // saucer
+  const bodyGrad = ctx.createLinearGradient(0, 5, 0, 18);
+  bodyGrad.addColorStop(0, '#888'); bodyGrad.addColorStop(1, '#444');
+  ctx.beginPath(); ctx.ellipse(0, 12, 50, 10, 0, 0, Math.PI * 2);
+  ctx.fillStyle = bodyGrad; ctx.fill();
+  // dome
+  const domeGrad = ctx.createRadialGradient(-10, -5, 2, 0, 0, 30);
+  domeGrad.addColorStop(0, 'rgba(180,255,200,0.9)');
+  domeGrad.addColorStop(0.5, 'rgba(80,200,120,0.8)');
+  domeGrad.addColorStop(1, 'rgba(30,80,50,0.9)');
+  ctx.beginPath(); ctx.ellipse(0, 5, 30, 20, 0, 0, Math.PI * 2);
+  ctx.fillStyle = domeGrad; ctx.fill();
+  // lights
+  const lc = ['#ff4444','#ffff44','#44ffff','#44ff44'];
+  for (let l = 0; l < 6; l++) {
+    const la = (l / 6) * Math.PI * 2 + t * 0.04;
+    const lx = Math.cos(la) * 38, ly = Math.sin(la) * 6 + 12;
+    const c = lc[l % lc.length];
+    ctx.beginPath(); ctx.arc(lx, ly, 3, 0, Math.PI * 2);
+    ctx.fillStyle = c; ctx.shadowBlur = 8; ctx.shadowColor = c; ctx.fill(); ctx.shadowBlur = 0;
+  }
+  ctx.restore();
+}
+
+function drawAlienSign(ctx, x, y, t, seed) {
+  const messages = [
+    'WELCOME TO SECTOR 7G',
+    'EARTH: 3/5 STARS',
+    'NO PROBING ZONE',
+    'NEXT EXIT: ANDROMEDA',
+    'SPEED LIMIT: 0.5c',
+    'HUMANS ARE FRIENDS NOT FOOD',
+    'AREA 52 (THE REAL ONE)',
+    'HONK IF YOU\'RE CARBON-BASED',
+    'FREE WIFI: password is 42',
+    'WE COME IN PIECES',
+  ];
+  const msg = messages[Math.floor(sr(seed * 13) * messages.length)];
+  const bob = Math.sin(t * 0.02 + seed) * 4;
+  const glow = 0.6 + Math.sin(t * 0.04 + seed * 2) * 0.3;
+  ctx.save(); ctx.translate(x, y + bob);
+  // post
+  ctx.strokeStyle = 'rgba(100,100,120,0.6)'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(0, 20); ctx.lineTo(0, 50); ctx.stroke();
+  // board
+  ctx.font = '10px monospace';
+  const tw = ctx.measureText(msg).width;
+  const sw = Math.max(tw + 30, 120), rr = 8;
+  ctx.fillStyle = `rgba(10,20,40,${0.85 * glow})`;
+  ctx.strokeStyle = `rgba(100,255,150,${0.5 * glow})`; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-sw/2+rr, -15); ctx.lineTo(sw/2-rr, -15);
+  ctx.arcTo(sw/2, -15, sw/2, -15+rr, rr); ctx.lineTo(sw/2, 20-rr);
+  ctx.arcTo(sw/2, 20, sw/2-rr, 20, rr); ctx.lineTo(-sw/2+rr, 20);
+  ctx.arcTo(-sw/2, 20, -sw/2, 20-rr, rr); ctx.lineTo(-sw/2, -15+rr);
+  ctx.arcTo(-sw/2, -15, -sw/2+rr, -15, rr);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  // neon text
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = `rgba(100,255,150,${glow})`;
+  ctx.shadowBlur = 6; ctx.shadowColor = `rgba(100,255,150,${glow * 0.5})`;
+  ctx.fillText(msg, 0, 2);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+// ─── STARS (multi-layer parallax) ─────────────────────────────────────────────
+const STAR_LAYERS = [
+  { count: 200, parallax: 0.00001, sizeMin: 0.3, sizeMax: 1.0 },
+  { count: 120, parallax: 0.00004, sizeMin: 0.8, sizeMax: 1.8 },
+  { count: 60,  parallax: 0.0001,  sizeMin: 1.2, sizeMax: 2.5 },
+];
+const STARS = [];
+let starId = 0;
+for (const layer of STAR_LAYERS) {
+  for (let i = 0; i < layer.count; i++) {
+    STARS.push({
+      x: sr(starId * 17.3 + 0.5),
+      y: sr(starId * 31.7 + 0.3),
+      size: layer.sizeMin + sr(starId * 7.1 + 0.1) * (layer.sizeMax - layer.sizeMin),
+      twinkle: sr(starId * 3.9 + 0.7) * Math.PI * 2,
+      parallax: layer.parallax,
+      hue: sr(starId * 5.3) > 0.9 ? (sr(starId * 8.1) > 0.5 ? 1 : 2) : 0,
+    });
+    starId++;
+  }
+}
+const STAR_COLORS = [
+  (a) => `rgba(255,255,255,${a})`,
+  (a) => `rgba(170,204,255,${a})`,
+  (a) => `rgba(255,221,170,${a})`,
+];
+
+// Shooting stars
+const shootingStars = [];
+function maybeSpawnShootingStar() {
+  if (altitude < 80000 || shootingStars.length >= 3 || Math.random() > 0.003) return;
+  shootingStars.push({
+    x: Math.random() * W, y: Math.random() * H * 0.6,
+    vx: (Math.random() > 0.5 ? 1 : -1) * (3 + Math.random() * 4),
+    vy: 2 + Math.random() * 3,
+    life: 40 + Math.random() * 30, age: 0,
+  });
+}
+
+// ─── NEBULAE (deep space) ─────────────────────────────────────────────────────
+const NEBULAE = Array.from({length: 8}, (_, i) => ({
+  x: sr(i * 23.1 + 5) * 1.2 - 0.1,
+  y: sr(i * 41.7 + 3) * 1.2 - 0.1,
+  r: 60 + sr(i * 19.3) * 100,
+  colorBase: ['80,40,120','30,60,120','120,40,60','40,100,80','100,60,30'][i % 5],
+  parallax: 0.000005 + sr(i * 7) * 0.00002,
+}));
+
+// ─── GROUND ───────────────────────────────────────────────────────────────────
+const HILL_LAYERS = [
+  { yOff: 0.00, depth: 0.8, color: '#3a6428', segs: 12, amp: 30 },
+  { yOff: 0.03, depth: 0.5, color: '#4a7832', segs: 15, amp: 20 },
+  { yOff: 0.06, depth: 0.3, color: '#5a8a3a', segs: 18, amp: 15 },
+];
+
+function drawGround(alt) {
+  const groundSY = worldToScreen(0);
+  if (groundSY > H + 200) return;
+
+  if (groundSY < H) {
+    // Hills
+    for (const hl of HILL_LAYERS) {
+      const baseY = groundSY + hl.yOff * H * 3;
+      if (baseY > H + 50) continue;
+      ctx.fillStyle = hl.color;
+      ctx.beginPath(); ctx.moveTo(0, H);
+      for (let px = 0; px <= W; px += W / hl.segs) {
+        const hy = baseY - Math.abs(Math.sin(px * 0.003 + hl.depth * 5)) * hl.amp
+                   - sr(Math.floor(px * 0.01 + hl.depth * 100)) * hl.amp * 0.5;
+        ctx.lineTo(px, hy);
+      }
+      ctx.lineTo(W, H); ctx.closePath(); ctx.fill();
+    }
+    // Solid ground fill
+    const gGrad = ctx.createLinearGradient(0, groundSY + H * 0.06, 0, H);
+    gGrad.addColorStop(0, '#5a8a3a'); gGrad.addColorStop(0.2, '#4a7830');
+    gGrad.addColorStop(0.6, '#8B6914'); gGrad.addColorStop(1, '#5a4010');
+    ctx.fillStyle = gGrad;
+    ctx.fillRect(0, groundSY + H * 0.06, W, H);
+
+    // Trees
+    if (alt < 600) {
+      const treeAlpha = Math.max(0, 1 - alt / 600);
+      const treeBase = groundSY + H * 0.05;
+      ctx.fillStyle = `rgba(30,50,20,${treeAlpha})`;
+      for (let tx = 0; tx < W + 60; tx += 35 + sr(tx * 0.005) * 20) {
+        const th = 25 + sr(tx * 0.01) * 45;
+        const tw = 14 + sr(tx * 0.02) * 14;
+        const kind = Math.floor(sr(tx * 0.007) * 3);
+        ctx.beginPath();
+        if (kind === 0) {
+          ctx.moveTo(tx - tw/2, treeBase); ctx.lineTo(tx, treeBase - th); ctx.lineTo(tx + tw/2, treeBase);
+        } else if (kind === 1) {
+          ctx.arc(tx, treeBase - th * 0.6, tw * 0.6, 0, Math.PI * 2);
+        } else {
+          for (let ly = 0; ly < 3; ly++) {
+            ctx.moveTo(tx - tw/2*(1 - ly*0.2), treeBase - th*ly*0.3);
+            ctx.lineTo(tx, treeBase - th*(ly*0.3 + 0.35));
+            ctx.lineTo(tx + tw/2*(1 - ly*0.2), treeBase - th*ly*0.3);
+          }
+        }
+        ctx.fill();
+      }
+    }
+    // Buildings
+    if (alt < 400) {
+      const bAlpha = Math.max(0, 1 - alt / 400);
+      const bBase = groundSY + H * 0.04;
+      ctx.fillStyle = `rgba(40,35,30,${bAlpha * 0.6})`;
+      for (let bx = W * 0.15; bx < W * 0.85; bx += 60 + sr(bx * 0.003) * 40) {
+        const bh = 20 + sr(bx * 0.009) * 35;
+        const bw = 15 + sr(bx * 0.013) * 20;
+        ctx.fillRect(bx - bw/2, bBase - bh, bw, bh);
+        ctx.fillStyle = `rgba(255,220,100,${bAlpha * 0.3})`;
+        for (let wy = bBase - bh + 5; wy < bBase - 3; wy += 8) {
+          for (let wx = bx - bw/2 + 4; wx < bx + bw/2 - 4; wx += 7) {
+            if (sr(wx * 0.1 + wy * 0.2) > 0.4) ctx.fillRect(wx, wy, 3, 3);
+          }
+        }
+        ctx.fillStyle = `rgba(40,35,30,${bAlpha * 0.6})`;
+      }
     }
   }
 }
 
-// ─── ATMOSPHERE HAZE ─────────────────────────────────────────────────────────
-function drawHaze(ctx, altitude) {
-  if (altitude < 5000 || altitude > 120000) return;
-  const t = Math.min(1, (altitude - 5000) / 60000);
-  const haze = t * 0.15;
+// ─── ATMOSPHERE EFFECTS ───────────────────────────────────────────────────────
+function drawHaze(alt) {
+  if (alt < 5000 || alt > 120000) return;
+  const t = Math.min(1, (alt - 5000) / 60000);
+  const haze = t * 0.12;
   const hGrad = ctx.createLinearGradient(0, 0, 0, H);
-  hGrad.addColorStop(0, `rgba(150,190,230,0)`);
+  hGrad.addColorStop(0, 'rgba(150,190,230,0)');
   hGrad.addColorStop(0.5, `rgba(150,190,230,${haze})`);
-  hGrad.addColorStop(1, `rgba(150,190,230,0)`);
-  ctx.fillStyle = hGrad;
-  ctx.fillRect(0, 0, W, H);
+  hGrad.addColorStop(1, 'rgba(150,190,230,0)');
+  ctx.fillStyle = hGrad; ctx.fillRect(0, 0, W, H);
 }
 
-// ─── MAIN RENDER ─────────────────────────────────────────────────────────────
+function drawEarthCurvature(alt) {
+  if (alt < 150000) return;
+  const t = Math.min(1, (alt - 150000) / 300000);
+  const curveY = H * (0.9 - t * 0.15);
+  const curveR = W * (1.5 + t * 2);
+  // atmospheric glow ring
+  const glowGrad = ctx.createRadialGradient(W/2, curveY + curveR, curveR - 30, W/2, curveY + curveR, curveR + 20);
+  glowGrad.addColorStop(0, 'rgba(0,0,0,0)');
+  glowGrad.addColorStop(0.7, `rgba(60,140,255,${0.15 * t})`);
+  glowGrad.addColorStop(0.85, `rgba(100,180,255,${0.08 * t})`);
+  glowGrad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = glowGrad; ctx.fillRect(0, curveY - 60, W, H - curveY + 60);
+  // earth body
+  ctx.fillStyle = `rgba(15,25,60,${0.6 * t})`;
+  ctx.beginPath(); ctx.arc(W/2, curveY + curveR, curveR, 0, Math.PI * 2); ctx.fill();
+  // atmosphere line
+  ctx.strokeStyle = `rgba(100,180,255,${0.3 * t})`; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(W/2, curveY + curveR, curveR, Math.PI + 0.4, Math.PI * 2 - 0.4); ctx.stroke();
+}
+
+function drawAurora(alt) {
+  if (alt < 80000 || alt > 400000) return;
+  const t = Math.min(1, (alt - 80000) / 200000);
+  const aY = H * (0.6 + t * 0.1);
+  for (let i = 0; i < 5; i++) {
+    const wave = Math.sin(time * 0.008 + i * 1.5) * 40;
+    const x = W * (0.1 + i * 0.2) + wave;
+    const grad = ctx.createLinearGradient(x, aY - 60, x, aY + 40);
+    grad.addColorStop(0, 'rgba(50,200,120,0)');
+    grad.addColorStop(0.4, `rgba(50,200,120,${0.04 * t})`);
+    grad.addColorStop(0.6, `rgba(80,100,200,${0.03 * t})`);
+    grad.addColorStop(1, 'rgba(80,100,200,0)');
+    ctx.fillStyle = grad; ctx.fillRect(x - 60, aY - 60, 120, 100);
+  }
+}
+
+// ─── AMBIENT PARTICLES ────────────────────────────────────────────────────────
+const particles = [];
+const MAX_PARTICLES = 40;
+
+function updateParticles() {
+  if (particles.length < MAX_PARTICLES && Math.random() > 0.7) {
+    let color, size, vx, vy, life;
+    if (altitude < 2000) {
+      color = Math.random() > 0.5 ? 'rgba(200,220,100,0.3)' : 'rgba(180,120,50,0.25)';
+      size = 1 + Math.random() * 2; vx = (Math.random()-0.5)*0.8; vy = -0.2-Math.random()*0.3;
+      life = 120 + Math.random() * 80;
+    } else if (altitude < 60000) {
+      color = 'rgba(200,220,255,0.2)'; size = 0.5+Math.random()*1.5;
+      vx = (Math.random()-0.5)*0.5; vy = (Math.random()-0.5)*0.3; life = 80+Math.random()*60;
+    } else {
+      color = 'rgba(180,190,210,0.15)'; size = 0.3+Math.random()*0.8;
+      vx = (Math.random()-0.5)*0.3; vy = (Math.random()-0.5)*0.2; life = 100+Math.random()*80;
+    }
+    particles.push({ x: Math.random()*W, y: Math.random()*H, vx, vy, size, color, life, age: 0 });
+  }
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy; p.age++;
+    if (p.age > p.life || p.x < -10 || p.x > W+10 || p.y < -10 || p.y > H+10) particles.splice(i, 1);
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.globalAlpha = Math.min(1, 1 - p.age / p.life);
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ─── MAIN RENDER ──────────────────────────────────────────────────────────────
 function render() {
   ctx.clearRect(0, 0, W, H);
-  
-  // sky
+
+  // Sky
   const { top, bot } = getSkyColors(altitude);
   const skyGrad = ctx.createLinearGradient(0, 0, 0, H);
-  skyGrad.addColorStop(0, top);
-  skyGrad.addColorStop(1, bot);
-  ctx.fillStyle = skyGrad;
-  ctx.fillRect(0, 0, W, H);
+  skyGrad.addColorStop(0, top); skyGrad.addColorStop(1, bot);
+  ctx.fillStyle = skyGrad; ctx.fillRect(0, 0, W, H);
 
-  // stars (fade in from 60k)
-  const starAlpha = Math.max(0, Math.min(1, (altitude - 60000) / 100000));
-  if (starAlpha > 0) {
-    STARS.forEach(s => {
-      const twinkle = 0.5 + Math.sin(time * 0.03 + s.twinkle) * 0.3;
-      const x = s.x * W;
-      const y = s.y * H;
-      // parallax scroll
-      const parallaxY = ((y - altitude * 0.00005 * H) % H + H) % H;
-      drawStar(ctx, x, parallaxY, starAlpha * twinkle, s.size);
-    });
-  }
-
-  // atmosphere haze band
-  drawHaze(ctx, altitude);
-
-  // entities
-  LAYERS.forEach(layer => {
-    if (altitude < layer.altMin * 0.3 || altitude > layer.altMax * 3) return;
-    const density = calcDensity(altitude, layer.altMin, layer.altMax);
-    if (density <= 0) return;
-    for (let i = 0; i < layer.count; i++) {
-      const seed = i * 137.5 + layer.type.length * 17;
-      const ex = seededRand(seed) * W;
-      // vertical spread: entities distributed across the screen
-      const ey = seededRand(seed + 1) * H * 0.7 + H * 0.1;
-      ctx.globalAlpha = density * (0.7 + seededRand(seed + 5) * 0.3);
-      layer.drawFn(ctx, ex, ey, time, seed);
+  // Nebulae (deep space)
+  const nebAlpha = Math.max(0, Math.min(1, (altitude - 600000) / 400000));
+  if (nebAlpha > 0) {
+    for (const n of NEBULAE) {
+      const nx = n.x * W;
+      const ny = ((n.y * H - altitude * n.parallax * H) % (H * 1.4) + H * 1.4) % (H * 1.4) - H * 0.2;
+      const grad = ctx.createRadialGradient(nx, ny, 0, nx, ny, n.r);
+      grad.addColorStop(0, `rgba(${n.colorBase},${0.12 * nebAlpha})`);
+      grad.addColorStop(0.5, `rgba(${n.colorBase},${0.05 * nebAlpha})`);
+      grad.addColorStop(1, `rgba(${n.colorBase},0)`);
+      ctx.fillStyle = grad; ctx.fillRect(nx - n.r, ny - n.r, n.r * 2, n.r * 2);
     }
-    ctx.globalAlpha = 1;
-  });
-
-  // ground
-  drawGround(ctx, altitude);
-
-  // aurora / space glow near atmosphere boundary
-  if (altitude > 80000 && altitude < 400000) {
-    const auroraT = Math.min(1, (altitude - 80000) / 200000);
-    const aurGrad = ctx.createLinearGradient(0, H * 0.6, 0, H);
-    aurGrad.addColorStop(0, `rgba(50,200,120,0)`);
-    aurGrad.addColorStop(0.5, `rgba(50,200,120,${auroraT * 0.08})`);
-    aurGrad.addColorStop(1, `rgba(20,100,200,${auroraT * 0.04})`);
-    ctx.fillStyle = aurGrad;
-    ctx.fillRect(0, 0, W, H);
   }
+
+  // Stars
+  const starFade = Math.max(0, Math.min(1, (altitude - 50000) / 80000));
+  if (starFade > 0) {
+    for (const s of STARS) {
+      const tw = 0.5 + Math.sin(time * 0.03 + s.twinkle) * 0.35;
+      const a = starFade * tw;
+      const sx = s.x * W;
+      const sy = ((s.y * H - altitude * s.parallax * H) % H + H) % H;
+      ctx.beginPath(); ctx.arc(sx, sy, s.size, 0, Math.PI * 2);
+      ctx.fillStyle = STAR_COLORS[s.hue](a); ctx.fill();
+    }
+    // Shooting stars
+    maybeSpawnShootingStar();
+    for (let i = shootingStars.length - 1; i >= 0; i--) {
+      const ss = shootingStars[i];
+      ss.x += ss.vx; ss.y += ss.vy; ss.age++;
+      const a = starFade * Math.max(0, 1 - ss.age / ss.life);
+      if (a <= 0) { shootingStars.splice(i, 1); continue; }
+      const grad = ctx.createLinearGradient(ss.x, ss.y, ss.x - ss.vx * 9, ss.y - ss.vy * 9);
+      grad.addColorStop(0, `rgba(255,255,255,${a})`); grad.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.strokeStyle = grad; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(ss.x, ss.y); ctx.lineTo(ss.x - ss.vx * 9, ss.y - ss.vy * 9); ctx.stroke();
+    }
+  }
+
+  // Atmosphere effects
+  drawHaze(altitude);
+  drawEarthCurvature(altitude);
+  drawAurora(altitude);
+
+  // ─── CHUNK-BASED ENTITY RENDERING ──────────────────────────────────────────
+  const vr = getViewRange();
+  const viewTop = altitude + vr * 0.6;
+  const viewBot = altitude - vr * 0.6;
+  const cs = getChunkSize(altitude);
+  const startChunk = Math.floor(Math.max(0, viewBot) / cs);
+  const endChunk = Math.floor(viewTop / cs) + 1;
+
+  for (let ci = startChunk; ci <= endChunk; ci++) {
+    const chunkAlt = ci * cs;
+    const ents = getChunkEntities(chunkAlt, cs);
+    for (const e of ents) {
+      const sy = worldToScreen(e.worldAlt);
+      if (sy < -150 || sy > H + 150) continue;
+      e.drawFn(ctx, e.worldX * W, sy, time, e.seed);
+    }
+  }
+
+  // Ground (on top so it covers entities below horizon)
+  drawGround(altitude);
+
+  // Particles
+  drawParticles();
 }
 
-function calcDensity(alt, minAlt, maxAlt) {
-  const fadeRange = (maxAlt - minAlt) * 0.2;
-  if (alt < minAlt - fadeRange || alt > maxAlt + fadeRange) return 0;
-  let d = 1;
-  if (alt < minAlt) d = Math.max(0, (alt - (minAlt - fadeRange)) / fadeRange);
-  if (alt > maxAlt) d = Math.max(0, 1 - (alt - maxAlt) / fadeRange);
-  return d;
-}
-
-// ─── HUD UPDATE ───────────────────────────────────────────────────────────────
+// ─── HUD ──────────────────────────────────────────────────────────────────────
 const hudAlt = document.getElementById('altitude-display');
 const hudZone = document.getElementById('zone-label');
 const hint = document.getElementById('hint');
+const barFill = document.getElementById('altitude-bar-fill');
+const barMarker = document.getElementById('altitude-bar-marker');
 let hintHidden = false;
+let lastZoneLabel = '';
 
 function updateHUD() {
   const displayAlt = altitude < 1000
@@ -490,55 +820,66 @@ function updateHUD() {
       ? `${(altitude / 1000).toFixed(1)} km`
       : `${(altitude / 1000000).toFixed(2)} Mm`;
   hudAlt.textContent = displayAlt;
+
   const zone = getCurrentZone(altitude);
-  hudZone.textContent = zone.label;
-  // color shift for space
+  if (zone.label !== lastZoneLabel) {
+    lastZoneLabel = zone.label;
+    hudZone.textContent = zone.label;
+    hudZone.classList.add('flash');
+    setTimeout(() => hudZone.classList.remove('flash'), 400);
+  }
+
   const spaceT = Math.min(1, altitude / 200000);
-  const textBrightness = Math.round(150 + (1 - spaceT) * 100);
-  hudAlt.style.color = `rgba(${textBrightness},${textBrightness},${textBrightness},0.8)`;
+  const b = Math.round(150 + (1 - spaceT) * 100);
+  hudAlt.style.color = `rgba(${b},${b},${b},0.8)`;
+
+  // Altitude bar (logarithmic, caps at ~5Mm)
+  const maxAlt = 5000000;
+  const logPos = altitude <= 0 ? 0 : Math.log10(1 + altitude) / Math.log10(1 + maxAlt);
+  const pct = Math.min(100, logPos * 100);
+  barFill.style.height = pct + '%';
+  barMarker.style.bottom = pct + '%';
 }
 
-// ─── INPUT HANDLING ───────────────────────────────────────────────────────────
+// ─── INPUT ────────────────────────────────────────────────────────────────────
 let lastTouchY = null;
+
+function getScrollSpeed() {
+  return 1 + Math.log10(1 + Math.max(0, altitude)) * 0.6;
+}
 
 window.addEventListener('wheel', e => {
   e.preventDefault();
-  const delta = e.deltaY;
-  const scrollSpeed = 1 + altitude * 0.000015;
-  velocity += delta * scrollSpeed * 0.4;
+  velocity += e.deltaY * getScrollSpeed() * 0.35;
   if (!hintHidden) { hint.style.opacity = '0'; hintHidden = true; }
 }, { passive: false });
 
-window.addEventListener('touchstart', e => {
-  lastTouchY = e.touches[0].clientY;
-}, { passive: true });
+window.addEventListener('touchstart', e => { lastTouchY = e.touches[0].clientY; }, { passive: true });
 
 window.addEventListener('touchmove', e => {
   e.preventDefault();
   const dy = lastTouchY - e.touches[0].clientY;
   lastTouchY = e.touches[0].clientY;
-  const scrollSpeed = 1 + altitude * 0.000015;
-  velocity += dy * scrollSpeed * 0.8;
+  velocity += dy * getScrollSpeed() * 0.7;
   if (!hintHidden) { hint.style.opacity = '0'; hintHidden = true; }
 }, { passive: false });
 
 window.addEventListener('touchend', () => { lastTouchY = null; });
 
-// keyboard
 window.addEventListener('keydown', e => {
-  const scrollSpeed = 1 + altitude * 0.000015;
-  if (e.key === 'ArrowUp' || e.key === 'w') velocity -= 30 * scrollSpeed;
-  if (e.key === 'ArrowDown' || e.key === 's') velocity += 30 * scrollSpeed;
+  const sp = getScrollSpeed();
+  if (e.key === 'ArrowUp' || e.key === 'w') velocity -= 30 * sp;
+  if (e.key === 'ArrowDown' || e.key === 's') velocity += 30 * sp;
 });
 
 // ─── GAME LOOP ────────────────────────────────────────────────────────────────
 function loop() {
   time++;
-  // physics
   altitude = Math.max(0, altitude + velocity);
-  velocity *= 0.88; // friction/damping
-  if (Math.abs(velocity) < 0.1) velocity = 0;
-  
+  velocity *= 0.88;
+  if (Math.abs(velocity) < 0.05) velocity = 0;
+
+  updateParticles();
   render();
   updateHUD();
   requestAnimationFrame(loop);
