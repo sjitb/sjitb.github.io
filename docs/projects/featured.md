@@ -13,8 +13,10 @@ An interactive canvas experience that lets you scroll from ground level up throu
 
 [Launch Altitude Scroller]({{ "/projects/altitude-scroller/" | relative_url }}){: .btn .btn-blue }
 
+
 ## PDF Studio
 
 A privacy-first, browser-based PDF toolkit. Merge, split, rotate, and compress PDFs entirely client-side — no uploads, no server, no data leaves your browser tab.
 
 [Launch PDF Studio]({{ "/projects/pdf-studio/" | relative_url }}){: .btn .btn-blue }
+
