@@ -1,3 +1,10 @@
+---
+layout: null
+title: PDF Studio — Zero Upload PDF Tools
+permalink: /projects/pdf-studio/
+parent: Projects
+nav_order: 20
+---
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -17,7 +24,7 @@
     --accent-dim: rgba(200,245,90,0.12);
     --accent-glow: rgba(200,245,90,0.25);
     --text: #e8e8f0;
-    --muted: #6b6b80;
+    --muted: #8e8ea8;
     --danger: #ff5f6d;
     --radius: 10px;
   }
@@ -272,8 +279,8 @@
 
   .file-remove {
     position: absolute;
-    top: 6px; right: 6px;
-    width: 22px; height: 22px;
+    top: 5px; right: 5px;
+    width: 28px; height: 28px;
     background: rgba(14,14,17,0.85);
     border: 1px solid var(--border);
     border-radius: 50%;
@@ -291,8 +298,8 @@
 
   .order-badge {
     position: absolute;
-    top: 6px; left: 6px;
-    width: 22px; height: 22px;
+    top: 5px; left: 5px;
+    width: 28px; height: 28px;
     background: var(--accent);
     border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
@@ -652,6 +659,88 @@
   }
 
   .file-card { animation: fadeUp 0.25s ease both; }
+
+  /* ─── HOW TO USE ─── */
+  .how-to {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin-bottom: 20px;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+  }
+
+  .how-step {
+    display: flex; align-items: center; gap: 6px;
+    color: var(--muted);
+  }
+
+  .how-num {
+    width: 20px; height: 20px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .how-arrow { color: var(--border); }
+
+  /* ─── REORDER BUTTONS ─── */
+  .card-move-btns {
+    display: none;
+    position: absolute;
+    bottom: 42px; right: 5px;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .file-card:hover .card-move-btns,
+  .file-card:focus-within .card-move-btns { display: flex; }
+
+  .move-btn {
+    width: 22px; height: 22px;
+    background: rgba(14,14,17,0.85);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--muted);
+    font-size: 11px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s;
+    backdrop-filter: blur(4px);
+    padding: 0; line-height: 1;
+  }
+
+  .move-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ─── FOCUS STYLES ─── */
+  *:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* ─── FIREFOX SCROLLBAR ─── */
+  html { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+
+  /* ─── RESPONSIVE ─── */
+  @media (max-width: 900px) {
+    .app { grid-template-columns: 1fr; }
+    .main-panel { border-right: none; border-bottom: 1px solid var(--border); }
+    .sidebar { flex-direction: row; flex-wrap: wrap; }
+    .sidebar-section { flex: 1 1 200px; }
+    .cta-btn, .progress-wrap, .privacy-info { flex: 1 1 100%; }
+  }
+
+  @media (max-width: 640px) {
+    header { padding: 14px 16px; }
+    .logo-text { font-size: 15px; }
+    .privacy-badge { font-size: 9px; padding: 4px 10px; }
+    .main-panel { padding: 16px; }
+    .panel-title { font-size: 20px; }
+    .drop-zone { padding: 32px 16px; }
+    .files-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 10px; }
+    .sidebar { padding: 16px; }
+  }
 </style>
 </head>
 <body>
@@ -666,12 +755,22 @@
 
 <div class="app">
   <!-- MAIN PANEL -->
-  <div class="main-panel">
+  <div class="main-panel" role="main">
     <div class="panel-header">
       <div class="panel-title">Drop your <em>PDFs</em> here</div>
     </div>
 
-    <div class="drop-zone" id="dropZone">
+    <div class="how-to" aria-label="How to use PDF Studio">
+      <span class="how-step"><span class="how-num">1</span>Add files</span>
+      <span class="how-arrow">→</span>
+      <span class="how-step"><span class="how-num">2</span>Reorder</span>
+      <span class="how-arrow">→</span>
+      <span class="how-step"><span class="how-num">3</span>Choose operation</span>
+      <span class="how-arrow">→</span>
+      <span class="how-step"><span class="how-num">4</span>Download</span>
+    </div>
+
+    <div class="drop-zone" id="dropZone" role="button" tabindex="0" aria-label="Upload PDF files — click or press Enter to browse">
       <div class="drop-icon">📄</div>
       <div class="drop-label">Drag & drop PDF files</div>
       <div class="drop-sub">or click to browse &nbsp;·&nbsp; <strong>Processed entirely in your browser</strong></div>
@@ -681,7 +780,7 @@
     <div id="filesGrid" class="files-grid"></div>
 
     <div class="hint" id="dragHint" style="display:none">
-      Drag cards to reorder — merge order follows the sequence above
+      Drag cards to reorder, or use the ↑↓ buttons — order follows the sequence above
     </div>
 
     <!-- ARCHITECTURE DIAGRAM -->
@@ -715,15 +814,15 @@
   </div>
 
   <!-- SIDEBAR -->
-  <div class="sidebar">
+  <div class="sidebar" role="complementary" aria-label="PDF tools options">
     <!-- Operation -->
     <div class="sidebar-section">
       <div class="section-label">Operation</div>
       <div class="op-tabs">
-        <button class="op-tab active" data-op="merge">Merge</button>
-        <button class="op-tab" data-op="split">Split</button>
-        <button class="op-tab" data-op="compress">Compress</button>
-        <button class="op-tab" data-op="rotate">Rotate</button>
+        <button class="op-tab active" data-op="merge" aria-pressed="true">Merge</button>
+        <button class="op-tab" data-op="split" aria-pressed="false">Split</button>
+        <button class="op-tab" data-op="compress" aria-pressed="false">Compress</button>
+        <button class="op-tab" data-op="rotate" aria-pressed="false">Rotate</button>
       </div>
     </div>
 
@@ -731,12 +830,12 @@
     <div class="sidebar-section">
       <div class="section-label">Options</div>
       <div class="option-row">
-        <span class="option-label">Remove metadata</span>
-        <button class="toggle on" id="toggleMeta" onclick="this.classList.toggle('on')"></button>
+        <span class="option-label" id="labelMeta">Remove metadata</span>
+        <button class="toggle on" id="toggleMeta" aria-labelledby="labelMeta" aria-pressed="true" onclick="this.classList.toggle('on'); this.setAttribute('aria-pressed', this.classList.contains('on').toString())"></button>
       </div>
       <div class="option-row">
-        <span class="option-label">Compress output</span>
-        <button class="toggle" id="toggleCompress" onclick="this.classList.toggle('on')"></button>
+        <span class="option-label" id="labelCompress">Compress output</span>
+        <button class="toggle" id="toggleCompress" aria-labelledby="labelCompress" aria-pressed="false" onclick="this.classList.toggle('on'); this.setAttribute('aria-pressed', this.classList.contains('on').toString())"></button>
       </div>
       <div class="option-row">
         <span class="option-label">Page size</span>
@@ -788,7 +887,7 @@
     <!-- CTA -->
     <button class="cta-btn" id="processBtn" disabled onclick="processFiles()">
       <div class="btn-inner">
-        <span>⬇</span> <span id="btnLabel">Merge & Download</span>
+        <span aria-hidden="true">⬇</span> <span id="btnLabel">Merge & Download</span>
       </div>
     </button>
 
@@ -828,8 +927,12 @@
 
   document.querySelectorAll('.op-tab').forEach(tab => {
     tab.addEventListener('click', () => {
-      document.querySelectorAll('.op-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.op-tab').forEach(t => {
+        t.classList.remove('active');
+        t.setAttribute('aria-pressed', 'false');
+      });
       tab.classList.add('active');
+      tab.setAttribute('aria-pressed', 'true');
       document.getElementById('btnLabel').textContent = opLabels[tab.dataset.op];
     });
   });
@@ -846,6 +949,10 @@
   });
 
   dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+
+  dropZone.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+  });
 
   dropZone.addEventListener('drop', e => {
     e.preventDefault();
@@ -894,8 +1001,12 @@
         <div class="file-name" title="${entry.file.name}">${entry.file.name.replace('.pdf','')}</div>
         <div class="file-size">${formatSize(entry.file.size)}</div>
       </div>
-      <div class="order-badge" id="order-${idx}">${idx + 1}</div>
-      <button class="file-remove" title="Remove" onclick="removeFile(${idx}, event)">✕</button>
+      <div class="order-badge" id="order-${idx}" aria-label="Position ${idx + 1}">${idx + 1}</div>
+      <div class="card-move-btns">
+        <button class="move-btn" onclick="moveFile(${idx}, -1, event)" title="Move earlier" aria-label="Move earlier">↑</button>
+        <button class="move-btn" onclick="moveFile(${idx}, 1, event)" title="Move later" aria-label="Move later">↓</button>
+      </div>
+      <button class="file-remove" title="Remove" aria-label="Remove ${entry.file.name}" onclick="removeFile(${idx}, event)">✕</button>
     `;
 
     // Drag events for reordering
@@ -981,6 +1092,16 @@
     updateStats();
     updateBtn();
     document.getElementById('dragHint').style.display = files.length > 1 ? 'flex' : 'none';
+  }
+
+  // ─── MOVE FILE ───
+  function moveFile(idx, direction, e) {
+    e.stopPropagation();
+    const targetIdx = idx + direction;
+    if (targetIdx < 0 || targetIdx >= files.length) return;
+    const moved = files.splice(idx, 1)[0];
+    files.splice(targetIdx, 0, moved);
+    rebuildGrid();
   }
 
   // ─── REBUILD GRID ───
