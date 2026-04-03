@@ -8,204 +8,160 @@ nav_order: 20
 
 # Talking to Trains: Building an MCP Server for Real-Time MBTA Data
 
-There is a particular kind of frustration that comes from standing on a commuter rail platform, refreshing a transit app, and still not knowing whether your train is actually coming. The data exists. The APIs are public. And yet getting a clear, contextual answer, "the next Franklin Line train is 8 minutes out, but there is a moderate delay downstream," still requires you to do the cognitive assembly yourself.
+This project started with a product question: how do we reduce rider decision latency when service conditions change in real time?
 
-That friction is exactly the kind of problem I want to solve as AI assistants get smarter. Not with a custom app. With a general-purpose agent that just knows how to ask the right questions.
+Transit apps expose data, but riders still do the synthesis. The objective was to move that synthesis into an agent workflow without losing traceability.
 
-This post is about building that: a real-time MBTA data layer, exposed as an MCP server, so Claude can answer natural-language questions about trains on your behalf.
+## Problem Statement
 
----
+Riders ask goal-oriented questions:
 
-## Why MCP Is the Interesting Part
+- Is my line delayed?
+- What is the next departure from this station?
+- Which train gets me to a destination before a deadline?
 
-If you have not encountered [Model Context Protocol](https://modelcontextprotocol.io) yet, here is the one-sentence version: it is an open standard that lets AI agents discover and call external tools at runtime, without those tools being hardcoded into the model or the host app.
+The MBTA API provides the raw ingredients, but question-to-answer flow is multi-step and context-dependent. The goal was a tool layer an agent can execute reliably.
 
-That distinction matters more than it might seem.
+## Decision Log
 
-Most tool use in LLM applications today is tightly coupled: a developer decides ahead of time which functions the model can call, wires them in, and ships. It works, but it does not scale. Every new capability requires a new integration, a new deployment, and a new round of prompt tuning.
+### Decision 1: Separate transport integration from agent tooling
 
-MCP flips that. Tools advertise themselves: their name, their inputs, and their purpose. A compliant agent can discover and invoke them dynamically. The model does not need to be retrained for each capability. It reads the tool description and determines when to use it.
+Decision:
+Build two layers, an async MBTA client and an MCP server on top.
 
-This is the early shape of something bigger: a world where APIs do not just serve applications, they serve agents.
+Rationale:
+The MBTA integration lifecycle and the agent-tool lifecycle move at different speeds. Coupling them would increase risk and slow iteration.
 
----
+Outcome:
+API changes stay in the client while tool contracts evolve independently.
 
-## The Architecture
+### Decision 2: Use MCP stdio transport instead of a hosted service
 
-The project has two layers with a clean separation.
+Decision:
+Run tools through MCP over stdio as a local subprocess.
 
-Layer 1, `mbta_client.py`, is an async wrapper around the [MBTA V3 REST API](https://api-v3.mbta.com). It handles authentication and request lifecycle, and returns parsed API data.
+Rationale:
+The priority was development speed and operational simplicity.
 
-Layer 2, `mbta_mcp_server.py`, sits on top of the client and exposes named tools Claude can call.
+Tradeoff:
+Stdio is excellent for local workflows, but it is not a direct replacement for a multi-tenant hosted tool platform.
 
-```text
-Claude (Claude Code / Claude Desktop)
-        |  MCP protocol over stdio
-        v
-  mbta_mcp_server.py   <- tools Claude can discover and call
-        |  Python function calls
-        v
-  mbta_client.py       <- async wrapper around MBTA V3 API
-        |  HTTPS + API key
-        v
-  api-v3.mbta.com      <- live transit data
-```
+Outcome:
+Faster testing and lower development overhead.
 
-The `stdio` transport is key: Claude Code or Claude Desktop spawns the server as a subprocess and communicates over standard input/output. No HTTP server and no ports to manage.
+### Decision 3: Favor narrow intent-level tools over broad meta-tools
 
----
+Decision:
+Expose focused tools for alerts, predictions, schedules, stop lookup, route stops, route status, and trip schedule confirmation.
 
-## Quickstart in 60 Seconds
+Rationale:
+Broad tools increase ambiguity. Narrow tools improve composability and observability.
 
-1. Clone the repo and install dependencies: `pip install -r requirements.txt`
-2. Create `config.ini` in the repo root:
+Outcome:
+More consistent sequencing and cleaner failure handling.
 
-```ini
-[mbta]
-api_key = YOUR_MBTA_API_KEY
-```
+### Decision 4: Treat real-time and planned data as separate decision domains
 
-3. Make sure `.mcp.json` points to `mbta_mcp_server.py`
-4. Restart Claude Code (or Claude Desktop, if using desktop config)
-5. Ask: "Any delays on the Red Line right now?"
+Decision:
+Use predictions for immediate departures and schedules plus trip-level validation for future-arrival planning.
 
----
+Rationale:
+"Next train now" and "arrive by 9 AM tomorrow" are different planning problems with different data guarantees.
 
-## What the MBTA API Actually Offers
+Outcome:
+Lower risk of confident but incorrect future-trip answers.
 
-The MBTA V3 API is richer than most people realize. Beyond static schedule data, it provides:
+## Technical Learnings
 
-- Real-time predictions (live departure estimates)
-- Alerts (service disruptions with severity and effect)
-- Vehicle positions
-- Route and stop metadata
+### Learning 1: Tool descriptions are part of system behavior
 
-The API follows JSON:API with `data` and optional `included` resources. Predictions and schedules are separate endpoints. Predictions represent what is happening now; schedules represent what was planned.
+In MCP systems, descriptions are runtime orchestration guidance. Precision in tool semantics directly affected invocation quality.
 
-Route type filters are numeric:
+### Learning 2: Ambiguity is the default case
 
-- `0`: light rail
-- `1`: heavy rail
-- `2`: commuter rail
+Stop names, direction assumptions, and line naming regularly introduced ambiguity. Designing for disambiguation early was more valuable than optimizing for a single-call path.
 
-A client method from this project looks like this:
+### Learning 3: Multi-step reasoning should be explicit
 
-```python
-async def get_predictions(
-    self,
-    stop_id: str,
-    route_id: str | None = None,
-    direction_id: int | None = None,
-) -> list[dict[str, Any]]:
-    params = {
-        "filter[stop]": stop_id,
-        "filter[route]": route_id,
-        "filter[direction_id]": direction_id,
-        "include": "route,trip,stop",
-        "sort": "departure_time",
-    }
-    data = await self._get("/predictions", params)
-    return data.get("data", [])
-```
+For arrival-deadline questions, the reliable pattern was:
 
----
+1. Resolve origin and destination stops.
+2. Pull candidate schedules constrained by time window.
+3. Validate each candidate trip against destination stop timing.
 
-## Wrapping It as MCP Tools
+This sequence improved correctness and explainability.
 
-The MCP server exposes five tools:
+## Operational Usage Patterns
 
-- `get_line_alerts(route_id)`
-- `get_predictions(stop_id, route_id, direction_id)`
-- `get_route_status(route_id)`
-- `find_stop(name)`
-- `get_stops_for_route(route_id)`
+To validate usability beyond demos, I tracked common query patterns and expected orchestration paths.
 
-Tool descriptions matter because Claude reads them to decide when to invoke each tool.
+### Basic queries that should work consistently
 
-```python
-@mcp.tool()
-async def get_line_alerts(route_id: str) -> str:
-    """Return active service alerts for an MBTA route."""
-    async with MBTAClient() as client:
-        alerts = await client.get_alerts(route_id=route_id)
-    # format and return a human-readable summary
-```
+- "Check route status for Red Line"
+- "Show line alerts for CR-Franklin"
+- "Find stops matching South Station"
+- "List stops for Orange Line"
+- "Show tomorrow's inbound schedule from West Natick on the Worcester line"
 
-For Claude Code, the repo config is minimal:
+### Multi-step patterns used as design checks
 
-```json
-{
-  "mcpServers": {
-    "mbta": {
-      "command": "python",
-      "args": ["mbta_mcp_server.py"],
-      "cwd": "${workspaceFolder}"
-    }
-  }
-}
-```
+Example 1: next train from a named station
 
-Important implementation note: this project currently reads the API key from `config.ini` (not from MCP env vars).
+1. User asks: "When is the next Red Line train from Park Street?"
+2. Agent resolves stop: find_stop("Park Street")
+3. Agent fetches real-time departures: get_predictions(stop_id="place-pktrm", route_id="Red")
+4. Agent returns a readable departure summary.
 
----
+Example 2: commuter rail status plus departures
 
-## What It Unlocks
+1. User asks: "Is Needham service delayed and what are the next departures?"
+2. Agent checks service state: get_line_alerts("CR-Needham")
+3. Agent resolves stop and fetches predictions when needed.
+4. Agent combines disruption context with departure timing.
 
-Once the server is running, interactions like these work naturally:
+Example 3: future trip planning with arrival deadline
 
-- "Any delays on the Red Line right now?"
-- "When is the next train from South Station toward Needham?"
-- "Is the Green Line running normally?"
+1. User asks: "If I need to reach South Station by 9am tomorrow, which train do I take from West Natick on the Worcester or Framingham line?"
+2. Agent resolves origin and destination stop IDs.
+3. Agent queries planned service window: get_schedules(stop_id="place-WNatick", route_id="CR-Worcester", date="2026-04-03", direction_id=1, max_time="09:00")
+4. Agent validates candidate trips using get_trip_schedule(trip_id=...) at destination level.
+5. Agent reports the latest feasible departure that still meets the deadline.
 
-Claude decides which tools to call based on tool descriptions and query context.
+These patterns became acceptance criteria. If orchestration failed a step, tool boundaries or descriptions needed refinement.
 
-If a question has directional ambiguity, Claude may need an extra call (for example, adding `direction_id` after resolving stop and route context).
+### Prompting guidance that improved reliability
 
-### Example Claude Code interaction
+- Include route IDs when possible: Red, Orange, CR-Franklin, Green-D.
+- Include stop context when useful: for example, "at South Station".
+- Ask for bounded output when useful: for example, "show top 5 only".
 
-User:
+### Route ID conventions worth documenting
 
-> Next train from Park Street on the Red Line?
+Subway IDs commonly used:
 
-Likely tool sequence:
+- Red, Orange, Blue
+- Green, Green-B, Green-C, Green-D, Green-E
+- Mattapan
 
-1. `find_stop("Park Street")`
-2. `get_predictions(stop_id="place-pktrm", route_id="Red")`
+Commuter rail IDs commonly used:
 
-Claude response style:
+- CR-Franklin, CR-Needham, CR-Providence
+- CR-Worcester (also covers Framingham line stops such as West Natick and Framingham)
 
-> Next Red Line departures from Park Street are at 5:42 PM and 5:49 PM. Current service status is on time.
+## Takeaways
 
----
+- Treat tool interfaces as product surfaces, not implementation details.
+- Optimize for debuggable orchestration, not only endpoint coverage.
+- Separate fast-changing intent logic from slower integration plumbing.
+- Define correctness boundaries early, especially where real-time and planned data diverge.
 
-## Limitations
+## Next Decisions Under Consideration
 
-- Real-time data quality depends on MBTA feed availability.
-- Some station names map to multiple stop IDs and need disambiguation.
-- Prediction availability can vary by route and time of day.
+- Add confidence signals tied to feed freshness and data completeness.
+- Improve automatic disambiguation strategy for near-duplicate stop names.
+- Introduce a higher-level trip-planning orchestrator that preserves step-level explainability.
 
----
-
-## Where This Goes Next
-
-A few natural extensions:
-
-- Multi-stop trip planning with a higher-level tool like `get_trip_status(from_stop, to_stop)`
-- Proactive monitoring agents for commuter lines
-- Voice or chat integrations reusing the same MCP server
-- Cross-agency expansion to other GTFS-RT compatible systems
-
----
-
-## A Closing Thought on Agentic AI
-
-The compelling part is not just MBTA integration. It is the pattern.
-
-Much of the most useful AI work now happens at the boundary between models and external systems. MCP is one way to formalize that boundary so capabilities are discoverable and composable instead of hardcoded case by case.
-
-An MCP server for MBTA trains is a small, concrete example. The pattern scales well beyond transit.
-
----
+The broader takeaway: agentic systems work best when each layer has a clear contract. Data retrieval, tool semantics, and orchestration logic should be independently understandable and evolvable.
 
 Built with the [MBTA V3 API](https://api-v3.mbta.com), the [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk), and Claude.
 
