@@ -17,7 +17,7 @@ I'm Satrajit, a software engineer with 12+ years of experience and a genuine obs
   <a href="https://www.linkedin.com/in/sjitb" title="LinkedIn">
     <img src="/assets/images/icons/linkedin.svg" alt="LinkedIn" width="28" height="28" />
   </a>
-  <a href="https://bsky.app/profile/sjitb.bsky.social" title="Bluesky">
+  <a href="https://bsky.app/profile/rbsu.bsky.social" title="Bluesky">
     <img src="/assets/images/icons/bluesky.svg" alt="Bluesky" width="28" height="28" />
   </a>
 </div>
