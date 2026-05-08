@@ -1,0 +1,1162 @@
+---
+layout: null
+title: USCIS Photo Prep — Free In-Browser Photo Tool
+permalink: /projects/uscis-photo/
+parent: Projects
+nav_order: 30
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>USCIS Photo Prep — Free In-Browser Tool</title>
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:ital,wght@0,300;0,600;1,300&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0e0e11;
+    --surface: #17171c;
+    --surface2: #1f1f27;
+    --border: #2a2a36;
+    --accent: #c8f55a;
+    --accent-dim: rgba(200,245,90,0.12);
+    --accent-glow: rgba(200,245,90,0.25);
+    --text: #e8e8f0;
+    --muted: #8e8ea8;
+    --danger: #ff5f6d;
+    --warn: #f5a623;
+    --warn-dim: rgba(245,166,35,0.12);
+    --radius: 10px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ─── NOISE TEXTURE OVERLAY ─── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none; z-index: 0; opacity: 0.6;
+  }
+
+  /* ─── HEADER ─── */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 32px;
+    border-bottom: 1px solid var(--border);
+    position: relative; z-index: 10;
+  }
+
+  .logo { display: flex; align-items: center; gap: 10px; }
+
+  .logo-mark {
+    width: 32px; height: 32px;
+    background: var(--accent);
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'DM Mono', monospace;
+    font-size: 14px; font-weight: 500;
+    color: #0e0e11;
+  }
+
+  .logo-text {
+    font-family: 'Fraunces', serif;
+    font-size: 18px; font-weight: 600;
+    letter-spacing: -0.3px;
+  }
+
+  .logo-text span { color: var(--accent); }
+
+  .privacy-badge {
+    display: flex; align-items: center; gap: 6px;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px; color: var(--accent);
+    background: var(--accent-dim);
+    border: 1px solid rgba(200,245,90,0.2);
+    padding: 5px 12px; border-radius: 20px;
+  }
+
+  .privacy-badge::before {
+    content: '●';
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* ─── LAYOUT ─── */
+  .app {
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    gap: 0;
+    min-height: calc(100vh - 65px);
+    position: relative; z-index: 1;
+  }
+
+  /* ─── MAIN PANEL ─── */
+  .main-panel {
+    padding: 32px;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .panel-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 20px;
+  }
+
+  .panel-title {
+    font-family: 'Fraunces', serif;
+    font-size: 26px; font-weight: 300;
+    letter-spacing: -0.5px;
+    color: var(--text);
+  }
+
+  .panel-title em { color: var(--accent); font-style: italic; }
+
+  .reset-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--muted);
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    padding: 6px 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .reset-btn:hover { border-color: var(--muted); color: var(--text); }
+
+  /* ─── HOW-TO ─── */
+  .how-to {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin-bottom: 18px;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+  }
+
+  .how-step { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+
+  .how-num {
+    width: 20px; height: 20px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .how-arrow { color: var(--border); }
+
+  /* ─── DETECTION BANNER ─── */
+  #detectionBanner {
+    display: none;
+    align-items: center; gap: 10px;
+    padding: 11px 14px;
+    border-radius: 8px;
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    margin-bottom: 16px;
+  }
+
+  #detectionBanner.detecting {
+    display: flex;
+    background: var(--accent-dim);
+    border: 1px solid rgba(200,245,90,0.2);
+    color: var(--accent);
+  }
+
+  #detectionBanner.no-face {
+    display: flex;
+    background: var(--warn-dim);
+    border: 1px solid rgba(245,166,35,0.25);
+    color: var(--warn);
+  }
+
+  #detectionBanner.success {
+    display: flex;
+    background: var(--accent-dim);
+    border: 1px solid rgba(200,245,90,0.2);
+    color: var(--accent);
+  }
+
+  .spinner {
+    width: 14px; height: 14px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    flex-shrink: 0;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .detect-retry-btn {
+    margin-left: auto;
+    background: transparent;
+    border: 1px solid var(--warn);
+    border-radius: 6px;
+    color: var(--warn);
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+
+  .detect-retry-btn:hover { background: var(--warn-dim); }
+
+  /* ─── DROP ZONE ─── */
+  .drop-zone {
+    border: 1.5px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 60px 32px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: var(--surface);
+    position: relative;
+    overflow: hidden;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .drop-zone::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: radial-gradient(circle at 50% 50%, var(--accent-dim) 0%, transparent 70%);
+    opacity: 0; transition: opacity 0.3s;
+  }
+
+  .drop-zone:hover::before,
+  .drop-zone.drag-over::before { opacity: 1; }
+
+  .drop-zone:hover,
+  .drop-zone.drag-over {
+    border-color: var(--accent);
+    background: var(--surface2);
+  }
+
+  .drop-icon {
+    width: 60px; height: 60px;
+    margin: 0 auto 18px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 28px;
+    transition: all 0.2s;
+  }
+
+  .drop-zone:hover .drop-icon {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+  }
+
+  .drop-label { font-size: 16px; font-weight: 500; margin-bottom: 8px; }
+
+  .drop-sub {
+    font-size: 13px; color: var(--muted);
+    font-family: 'DM Mono', monospace;
+    line-height: 1.9;
+  }
+
+  .drop-sub strong { color: var(--accent); }
+
+  /* ─── CROP PANEL ─── */
+  #cropPanel {
+    display: none;
+    flex-direction: column;
+    flex: 1;
+  }
+
+  .crop-wrap {
+    position: relative;
+    width: 100%;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+
+  #cropCanvas {
+    width: 100%;
+    height: auto;
+    cursor: grab;
+    display: block;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    user-select: none;
+    -webkit-user-drag: none;
+    touch-action: none;
+  }
+
+  #cropCanvas:active { cursor: grabbing; }
+
+  .canvas-hint {
+    text-align: center;
+    margin-top: 12px;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  /* ─── SIDEBAR ─── */
+  .sidebar {
+    padding: 24px 20px;
+    display: flex; flex-direction: column; gap: 18px;
+    overflow-y: auto;
+  }
+
+  .sidebar-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px;
+  }
+
+  .section-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 1.5px;
+    margin-bottom: 14px;
+  }
+
+  /* ─── COMPLIANCE ROWS ─── */
+  .compliance-row {
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .compliance-row:last-child { border-bottom: none; padding-bottom: 0; }
+
+  .c-header {
+    display: flex; align-items: center; justify-content: space-between;
+  }
+
+  .c-name { font-size: 12px; color: var(--text); }
+
+  .c-value {
+    font-family: 'DM Mono', monospace;
+    font-size: 12px; color: var(--muted);
+    transition: color 0.2s;
+  }
+
+  .c-value.pass { color: var(--accent); }
+  .c-value.warn { color: var(--warn); }
+  .c-value.fail { color: var(--danger); }
+
+  .progress-bar-bg {
+    height: 4px;
+    background: var(--surface2);
+    border-radius: 2px;
+    overflow: visible;
+    position: relative;
+  }
+
+  /* Threshold markers at 50 % and 69 % of bar width */
+  .progress-bar-bg::before,
+  .progress-bar-bg::after {
+    content: '';
+    position: absolute;
+    top: -2px; bottom: -2px;
+    width: 1px;
+    background: rgba(200,245,90,0.35);
+    z-index: 2;
+    border-radius: 1px;
+  }
+
+  .progress-bar-bg::before { left: 50%; }
+  .progress-bar-bg::after  { left: 69%; }
+
+  .progress-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    width: 0%;
+    transition: width 0.3s ease, background 0.3s ease;
+  }
+
+  .c-tip {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  /* ─── OUTPUT SPECS ─── */
+  .specs-box {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .spec-item {
+    background: var(--surface2);
+    border-radius: 6px;
+    padding: 10px;
+    border: 1px solid var(--border);
+  }
+
+  .spec-value {
+    font-family: 'Fraunces', serif;
+    font-size: 18px; font-weight: 600;
+    color: var(--accent);
+    line-height: 1; margin-bottom: 4px;
+  }
+
+  .spec-unit {
+    font-size: 12px;
+    font-family: 'DM Mono', monospace;
+    color: var(--muted);
+  }
+
+  .spec-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px; color: var(--muted);
+  }
+
+  /* ─── FILENAME + EXPORT BUTTON ─── */
+  .filename-input {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    padding: 9px 12px;
+    outline: none;
+    transition: border-color 0.15s;
+    margin-bottom: 12px;
+  }
+
+  .filename-input:focus { border-color: var(--accent); }
+
+  .cta-btn {
+    width: 100%;
+    padding: 14px;
+    background: var(--accent);
+    color: #0e0e11;
+    border: none;
+    border-radius: var(--radius);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 15px; font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+  }
+
+  .cta-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px var(--accent-glow);
+  }
+
+  .cta-btn:active { transform: translateY(0); }
+
+  .cta-btn:disabled {
+    background: var(--surface2);
+    color: var(--muted);
+    cursor: not-allowed;
+    transform: none; box-shadow: none;
+  }
+
+  /* ─── PRIVACY BOX ─── */
+  .privacy-info {
+    background: var(--accent-dim);
+    border: 1px solid rgba(200,245,90,0.15);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+  }
+
+  .privacy-title {
+    font-size: 12px; font-weight: 500; color: var(--accent);
+    margin-bottom: 8px;
+    display: flex; align-items: center; gap: 6px;
+  }
+
+  .privacy-list {
+    list-style: none;
+    display: flex; flex-direction: column; gap: 5px;
+  }
+
+  .privacy-list li {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px; color: var(--muted);
+    display: flex; align-items: flex-start; gap: 7px;
+  }
+
+  .privacy-list li::before {
+    content: '✓';
+    color: var(--accent); flex-shrink: 0; margin-top: 1px;
+  }
+
+  /* ─── REQUIREMENTS BOX ─── */
+  .req-list {
+    list-style: none;
+    display: flex; flex-direction: column; gap: 5px;
+  }
+
+  .req-list li {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px; color: var(--muted);
+    display: flex; align-items: flex-start; gap: 8px;
+  }
+
+  .req-dot {
+    width: 5px; height: 5px;
+    background: var(--accent);
+    border-radius: 50%;
+    flex-shrink: 0; margin-top: 4px;
+  }
+
+  /* ─── TOAST ─── */
+  .toast {
+    position: fixed;
+    bottom: 24px; left: 50%;
+    transform: translateX(-50%) translateY(80px);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 20px;
+    font-size: 13px;
+    display: flex; align-items: center; gap: 10px;
+    transition: transform 0.3s ease;
+    z-index: 100;
+    box-shadow: 0 16px 40px rgba(0,0,0,0.5);
+    backdrop-filter: blur(10px);
+    white-space: nowrap;
+  }
+
+  .toast.show { transform: translateX(-50%) translateY(0); }
+  .toast.success { border-color: var(--accent); }
+  .toast.error { border-color: var(--danger); color: var(--danger); }
+
+  /* ─── SCROLLBAR ─── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  html { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+
+  /* ─── FOCUS ─── */
+  *:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ─── RESPONSIVE ─── */
+  @media (max-width: 900px) {
+    .app { grid-template-columns: 1fr; }
+    .main-panel { border-right: none; border-bottom: 1px solid var(--border); }
+    .sidebar { flex-direction: row; flex-wrap: wrap; }
+    .sidebar-section { flex: 1 1 220px; }
+    .privacy-info, .sidebar-section:last-child { flex: 1 1 100%; }
+  }
+
+  @media (max-width: 640px) {
+    header { padding: 14px 16px; }
+    .logo-text { font-size: 15px; }
+    .privacy-badge { font-size: 9px; padding: 4px 9px; }
+    .main-panel { padding: 16px; }
+    .panel-title { font-size: 20px; }
+    .drop-zone { padding: 40px 16px; }
+    .sidebar { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-mark">U</div>
+    <div class="logo-text">USCIS<span>Photo</span></div>
+  </div>
+  <div class="privacy-badge">PHOTO STAYS ON YOUR DEVICE</div>
+</header>
+
+<div class="app">
+
+  <!-- ─── MAIN PANEL ─── -->
+  <div class="main-panel" role="main">
+    <div class="panel-header">
+      <div class="panel-title" id="panelTitle">Upload your <em>portrait photo</em></div>
+      <button class="reset-btn" id="resetBtn" style="display:none" onclick="resetTool()">← New Photo</button>
+    </div>
+
+    <!-- How-to steps (shown once a photo is loaded) -->
+    <div class="how-to" id="howTo" style="display:none" aria-label="Steps">
+      <span class="how-step"><span class="how-num">1</span>Upload photo</span>
+      <span class="how-arrow">→</span>
+      <span class="how-step"><span class="how-num">2</span>Face auto-detected</span>
+      <span class="how-arrow">→</span>
+      <span class="how-step"><span class="how-num">3</span>Pan &amp; zoom to align</span>
+      <span class="how-arrow">→</span>
+      <span class="how-step"><span class="how-num">4</span>Download</span>
+    </div>
+
+    <!-- Detection status banner -->
+    <div id="detectionBanner" role="status" aria-live="polite"></div>
+
+    <!-- Drop zone (initial state) -->
+    <div class="drop-zone" id="dropZone" role="button" tabindex="0"
+         aria-label="Upload portrait photo — click or press Enter to browse">
+      <div class="drop-icon">🪪</div>
+      <div class="drop-label">Upload your portrait photo</div>
+      <div class="drop-sub">
+        Drag &amp; drop or click to browse<br>
+        <strong>JPEG · PNG · WebP</strong> supported
+      </div>
+      <input type="file" id="fileInput" accept="image/jpeg,image/png,image/webp" style="display:none">
+    </div>
+
+    <!-- Crop panel (shown after upload) -->
+    <div id="cropPanel">
+      <div class="crop-wrap">
+        <canvas id="cropCanvas" width="600" height="600"
+                aria-label="Crop canvas — drag to pan, scroll to zoom"></canvas>
+      </div>
+      <p class="canvas-hint">Drag to pan &nbsp;·&nbsp; Scroll or pinch to zoom &nbsp;·&nbsp; Align face inside the oval guide</p>
+    </div>
+  </div>
+
+  <!-- ─── SIDEBAR ─── -->
+  <div class="sidebar" role="complementary" aria-label="Compliance and export">
+
+    <!-- Compliance -->
+    <div class="sidebar-section">
+      <div class="section-label">Compliance</div>
+
+      <div class="compliance-row">
+        <div class="c-header">
+          <span class="c-name">Head Size</span>
+          <span class="c-value" id="headSizeValue">—</span>
+        </div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="headSizeBar" style="background:var(--border); width:0%"></div>
+        </div>
+        <div class="c-tip" id="headSizeTip">Upload a photo to begin</div>
+      </div>
+
+      <div class="compliance-row">
+        <div class="c-header">
+          <span class="c-name">Centering</span>
+          <span class="c-value" id="centeringValue">—</span>
+        </div>
+        <div class="c-tip" id="centeringTip">—</div>
+      </div>
+    </div>
+
+    <!-- Output spec -->
+    <div class="sidebar-section">
+      <div class="section-label">Output Spec</div>
+      <div class="specs-box">
+        <div class="spec-item">
+          <div class="spec-value">600<span class="spec-unit">px</span></div>
+          <div class="spec-label">Width × Height</div>
+        </div>
+        <div class="spec-item">
+          <div class="spec-value">2<span class="spec-unit">"</span></div>
+          <div class="spec-label">At 300 DPI</div>
+        </div>
+        <div class="spec-item">
+          <div class="spec-value">50<span class="spec-unit">%</span></div>
+          <div class="spec-label">Min head height</div>
+        </div>
+        <div class="spec-item">
+          <div class="spec-value">69<span class="spec-unit">%</span></div>
+          <div class="spec-label">Max head height</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Export -->
+    <div class="sidebar-section">
+      <div class="section-label">Export</div>
+      <input type="text" class="filename-input" id="filenameInput"
+             value="uscis-photo.jpg" aria-label="Output filename">
+      <button class="cta-btn" id="exportBtn" disabled onclick="exportPhoto()">
+        ⬇&nbsp; Download 600×600 JPEG
+      </button>
+    </div>
+
+    <!-- Privacy -->
+    <div class="privacy-info">
+      <div class="privacy-title">🔒 Your photos stay private</div>
+      <ul class="privacy-list">
+        <li>Photo never leaves your device</li>
+        <li>All processing runs in your browser</li>
+        <li>Face analysis is local (WebGL / CPU)</li>
+        <li>Zero server calls — verify in DevTools</li>
+      </ul>
+    </div>
+
+    <!-- USCIS requirements reference -->
+    <div class="sidebar-section">
+      <div class="section-label">USCIS Requirements</div>
+      <ul class="req-list">
+        <li><span class="req-dot"></span>2 × 2 inch square photograph</li>
+        <li><span class="req-dot"></span>Head covers 50–69% of frame height</li>
+        <li><span class="req-dot"></span>Face centered horizontally</li>
+        <li><span class="req-dot"></span>Plain white or off-white background</li>
+        <li><span class="req-dot"></span>Head upright, facing directly forward</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- Toast notification -->
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+'use strict';
+
+// ─── CONSTANTS ───────────────────────────────────────────────────────────────
+const VP = 600;          // canvas internal resolution == output resolution
+const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
+const FACE_TIMEOUT_MS = 9000;
+
+// ─── STATE ───────────────────────────────────────────────────────────────────
+let img = null;
+let zoom = 1;
+let panX = 0, panY = 0;
+
+// Panning state
+let isPanning = false;
+let panStartX = 0, panStartY = 0;
+let panPrevX = 0, panPrevY = 0;
+
+// Touch pinch state
+let touchState = null;
+
+// Face detection data (in image natural pixels)
+let headHeight_img = null;
+let faceCenterX_img = null;
+let faceCenterY_img = null;
+
+// Detection flags
+let modelsLoaded = false;
+let faceDetectionEnabled = true;
+
+// ─── DOM REFS ────────────────────────────────────────────────────────────────
+const canvas      = document.getElementById('cropCanvas');
+const ctx         = canvas.getContext('2d');
+const dropZoneEl  = document.getElementById('dropZone');
+const fileInput   = document.getElementById('fileInput');
+const cropPanel   = document.getElementById('cropPanel');
+const banner      = document.getElementById('detectionBanner');
+const exportBtn   = document.getElementById('exportBtn');
+const headSizeVal = document.getElementById('headSizeValue');
+const headSizeBar = document.getElementById('headSizeBar');
+const headSizeTip = document.getElementById('headSizeTip');
+const centerVal   = document.getElementById('centeringValue');
+const centerTip   = document.getElementById('centeringTip');
+const resetBtn    = document.getElementById('resetBtn');
+const howTo       = document.getElementById('howTo');
+const panelTitle  = document.getElementById('panelTitle');
+
+// ─── IMAGE UPLOAD ─────────────────────────────────────────────────────────────
+dropZoneEl.addEventListener('click', () => fileInput.click());
+dropZoneEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+});
+dropZoneEl.addEventListener('dragover', e => {
+  e.preventDefault(); dropZoneEl.classList.add('drag-over');
+});
+dropZoneEl.addEventListener('dragleave', () => dropZoneEl.classList.remove('drag-over'));
+dropZoneEl.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZoneEl.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type.startsWith('image/')) loadImageFile(file);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) loadImageFile(fileInput.files[0]);
+});
+
+function loadImageFile(file) {
+  const url = URL.createObjectURL(file);
+  const image = new Image();
+  image.onload = () => {
+    img = image;
+    URL.revokeObjectURL(url);
+    enterCropMode();
+    runFaceDetection();
+  };
+  image.onerror = () => showToast('Could not load image', 'error');
+  image.src = url;
+}
+
+// ─── CROP MODE ───────────────────────────────────────────────────────────────
+function enterCropMode() {
+  dropZoneEl.style.display = 'none';
+  cropPanel.style.display = 'flex';
+  resetBtn.style.display = '';
+  howTo.style.display = '';
+  panelTitle.innerHTML = 'Align face inside the <em>oval guide</em>';
+  exportBtn.disabled = false;
+
+  // Fit entire image inside VP on first load
+  zoom = Math.min(VP / img.naturalWidth, VP / img.naturalHeight);
+  panX = 0;
+  panY = 0;
+  headHeight_img = null;
+  faceCenterX_img = null;
+  faceCenterY_img = null;
+
+  renderCanvas();
+  updateCompliance();
+}
+
+function resetTool() {
+  img = null;
+  headHeight_img = null;
+  faceCenterX_img = null;
+  faceCenterY_img = null;
+  zoom = 1; panX = 0; panY = 0;
+
+  dropZoneEl.style.display = '';
+  cropPanel.style.display = 'none';
+  resetBtn.style.display = 'none';
+  howTo.style.display = 'none';
+  panelTitle.innerHTML = 'Upload your <em>portrait photo</em>';
+  exportBtn.disabled = true;
+
+  hideBanner();
+  fileInput.value = '';
+  updateCompliance();
+}
+
+// ─── FACE DETECTION ──────────────────────────────────────────────────────────
+async function runFaceDetection() {
+  if (!faceDetectionEnabled) {
+    showBanner('no-face', '⚠ Face detection unavailable. Use the oval guide to position manually.');
+    return;
+  }
+
+  showBanner('detecting');
+
+  try {
+    if (!modelsLoaded) {
+      await Promise.race([
+        faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('timeout')), FACE_TIMEOUT_MS)
+        ),
+      ]);
+      modelsLoaded = true;
+    }
+
+    const detection = await faceapi.detectSingleFace(
+      img,
+      new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.4 })
+    );
+
+    if (!detection) {
+      showBanner('no-face', false);
+      return;
+    }
+
+    const { x, y, width, height } = detection.box;
+
+    // Estimate crown (~15% above bbox top) and chin (base of bbox)
+    const crownY = Math.max(0, y - height * 0.15);
+    const chinY  = y + height;
+    headHeight_img = chinY - crownY;
+    faceCenterX_img = x + width / 2;
+    faceCenterY_img = (crownY + chinY) / 2;
+
+    // Auto-position: head occupies 60% of VP height, face centered
+    const targetHeadPx = VP * 0.60;
+    zoom = targetHeadPx / headHeight_img;
+    panX = -(faceCenterX_img - img.naturalWidth  / 2) * zoom;
+    panY = -(faceCenterY_img - img.naturalHeight / 2) * zoom;
+
+    renderCanvas();
+    updateCompliance();
+    showBanner('success');
+    setTimeout(() => { if (banner.classList.contains('success')) hideBanner(); }, 4000);
+
+  } catch (err) {
+    if (err.message === 'timeout') {
+      faceDetectionEnabled = false;
+      showBanner('no-face', false, true);
+    } else {
+      showBanner('no-face', false);
+    }
+  }
+}
+
+/*  showBanner(type, noFaceDetected, isTimeout)
+    type: 'detecting' | 'no-face' | 'success'  */
+function showBanner(type, _unused, isTimeout) {
+  banner.className = type;
+
+  if (type === 'detecting') {
+    banner.innerHTML = '<div class="spinner"></div> Analyzing face\u2026';
+    return;
+  }
+
+  if (type === 'success') {
+    banner.innerHTML = '&#10003; Face detected \u2014 zoom or drag to refine if needed';
+    return;
+  }
+
+  // no-face
+  const msg = isTimeout
+    ? '&#9888; Face detection unavailable (model load timed out). Use the oval guide to position manually.'
+    : '&#9888; No face detected \u2014 position manually using the oval guide.';
+
+  const retryBtn = isTimeout ? '' : ' <button class="detect-retry-btn" onclick="runFaceDetection()">Retry</button>';
+  banner.innerHTML = msg + retryBtn;
+}
+
+function hideBanner() {
+  banner.className = '';
+}
+
+// ─── CANVAS RENDERING ────────────────────────────────────────────────────────
+function renderCanvas() {
+  ctx.clearRect(0, 0, VP, VP);
+  if (!img) return;
+
+  // Draw image
+  ctx.save();
+  ctx.translate(VP / 2 + panX, VP / 2 + panY);
+  ctx.scale(zoom, zoom);
+  ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
+  ctx.restore();
+
+  // Oval guide parameters (centered, 60% tall)
+  const cx = VP / 2, cy = VP / 2;
+  const ry = VP * 0.30;       // radius = 30% → diameter = 60% of VP
+  const rx = ry * 0.735;      // typical head aspect ratio (height ≈ 1.36× width)
+
+  // Darken area outside oval (even-odd fill rule punches oval hole)
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, VP, VP);
+  ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.42)';
+  ctx.fill('evenodd');
+  ctx.restore();
+
+  // Oval border (dashed lime)
+  ctx.save();
+  ctx.strokeStyle = 'rgba(200,245,90,0.78)';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([7, 5]);
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+
+  // Compliance zone reference lines:
+  //   50% head centered → crown at 25%, chin at 75%
+  //   69% head centered → crown at 15.5%, chin at 84.5%
+  ctx.save();
+  ctx.strokeStyle = 'rgba(200,245,90,0.20)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 7]);
+  [0.25, 0.75, 0.155, 0.845].forEach(frac => {
+    const y = frac * VP;
+    ctx.beginPath();
+    ctx.moveTo(0, y); ctx.lineTo(VP, y);
+    ctx.stroke();
+  });
+  ctx.setLineDash([]);
+  ctx.restore();
+
+  // Corner bracket accents
+  ctx.save();
+  ctx.strokeStyle = 'rgba(200,245,90,0.55)';
+  ctx.lineWidth = 2;
+  const cl = 22;
+  [[0, 0], [VP, 0], [VP, VP], [0, VP]].forEach(([bx, by]) => {
+    const dx = bx === 0 ? 1 : -1;
+    const dy = by === 0 ? 1 : -1;
+    ctx.beginPath();
+    ctx.moveTo(bx + dx * cl, by);
+    ctx.lineTo(bx, by);
+    ctx.lineTo(bx, by + dy * cl);
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
+// ─── COMPLIANCE ──────────────────────────────────────────────────────────────
+function updateCompliance() {
+  const noData = !img || headHeight_img === null;
+
+  if (noData) {
+    headSizeVal.textContent = '—';
+    headSizeVal.className = 'c-value';
+    headSizeBar.style.width = '0%';
+    headSizeBar.style.background = 'var(--border)';
+    headSizeTip.textContent = img ? 'Face not detected — zoom manually' : 'Upload a photo to begin';
+    centerVal.textContent = '—';
+    centerVal.className = 'c-value';
+    centerTip.textContent = '—';
+    return;
+  }
+
+  // Head height as a fraction of the 600 px output
+  const headFrac = (headHeight_img * zoom) / VP;
+  const headPct  = Math.round(headFrac * 100);
+  const pass  = headFrac >= 0.50 && headFrac <= 0.69;
+  const close = headFrac >= 0.44 && headFrac <= 0.75;
+
+  headSizeVal.textContent = headPct + '%';
+  headSizeVal.className = 'c-value ' + (pass ? 'pass' : close ? 'warn' : 'fail');
+  headSizeBar.style.width = clamp(headFrac * 100, 0, 100) + '%';
+  headSizeBar.style.background = pass ? 'var(--accent)' : close ? 'var(--warn)' : 'var(--danger)';
+
+  if (headFrac < 0.50)      headSizeTip.textContent = 'Zoom in — head too small (need \u226550%)';
+  else if (headFrac > 0.69) headSizeTip.textContent = 'Zoom out — head too large (need \u226469%)';
+  else                      headSizeTip.textContent = '\u2713 Head size within USCIS range (50\u201369%)';
+
+  // Horizontal centering: face center X offset from canvas center
+  const faceCX_vp  = VP / 2 + panX + (faceCenterX_img - img.naturalWidth / 2) * zoom;
+  const offsetPx   = Math.round(faceCX_vp - VP / 2);
+  const absOffset  = Math.abs(offsetPx);
+  const cPass  = absOffset <= 20;
+  const cClose = absOffset <= 50;
+
+  const sign = offsetPx > 0 ? '+' : '';
+  centerVal.textContent = cPass ? 'centered' : sign + offsetPx + 'px';
+  centerVal.className = 'c-value ' + (cPass ? 'pass' : cClose ? 'warn' : 'fail');
+
+  if (cPass)           centerTip.textContent = '\u2713 Face is well-centered';
+  else if (offsetPx > 0) centerTip.textContent = 'Pan left to center the face';
+  else                 centerTip.textContent = 'Pan right to center the face';
+}
+
+// ─── POINTER EVENTS (PAN) ────────────────────────────────────────────────────
+canvas.addEventListener('pointerdown', e => {
+  if (!e.isPrimary) { isPanning = false; return; }
+  isPanning = true;
+  canvas.setPointerCapture(e.pointerId);
+  const p = canvasPos(e);
+  panStartX = p.x; panStartY = p.y;
+  panPrevX  = panX; panPrevY  = panY;
+});
+
+canvas.addEventListener('pointermove', e => {
+  if (!isPanning || !e.isPrimary) return;
+  const p = canvasPos(e);
+  panX = panPrevX + (p.x - panStartX);
+  panY = panPrevY + (p.y - panStartY);
+  renderCanvas();
+  updateCompliance();
+});
+
+canvas.addEventListener('pointerup',     () => { isPanning = false; });
+canvas.addEventListener('pointercancel', () => { isPanning = false; });
+
+// ─── WHEEL EVENT (ZOOM) ──────────────────────────────────────────────────────
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const p = canvasPos(e);
+  const factor   = 1 + (-e.deltaY * 0.001) * 3;
+  const newZoom  = clamp(zoom * factor, 0.05, 20);
+  const realFact = newZoom / zoom;
+
+  // Zoom around cursor position
+  panX = (p.x - VP / 2) * (1 - realFact) + panX * realFact;
+  panY = (p.y - VP / 2) * (1 - realFact) + panY * realFact;
+  zoom = newZoom;
+
+  renderCanvas();
+  updateCompliance();
+}, { passive: false });
+
+// ─── TOUCH EVENTS (PINCH ZOOM) ───────────────────────────────────────────────
+canvas.addEventListener('touchstart', e => {
+  if (e.touches.length === 2) {
+    e.preventDefault();
+    touchState = {
+      dist: Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      ),
+      zoom,
+    };
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  if (e.touches.length === 2 && touchState) {
+    e.preventDefault();
+    const dist = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY
+    );
+    zoom = clamp(touchState.zoom * (dist / touchState.dist), 0.05, 20);
+    renderCanvas();
+    updateCompliance();
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchend', () => { touchState = null; });
+
+// ─── EXPORT ──────────────────────────────────────────────────────────────────
+function exportPhoto() {
+  if (!img) return;
+
+  const out  = document.createElement('canvas');
+  out.width  = VP;
+  out.height = VP;
+  const octx = out.getContext('2d');
+
+  // Identical transform to the crop canvas (already in VP=600 space)
+  octx.translate(VP / 2 + panX, VP / 2 + panY);
+  octx.scale(zoom, zoom);
+  octx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
+
+  const filename = document.getElementById('filenameInput').value.trim() || 'uscis-photo.jpg';
+
+  out.toBlob(blob => {
+    const url = URL.createObjectURL(blob);
+    const a   = document.createElement('a');
+    a.href     = url;
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    showToast('Photo downloaded!', 'success');
+  }, 'image/jpeg', 0.95);
+}
+
+// ─── UTILITIES ───────────────────────────────────────────────────────────────
+function canvasPos(e) {
+  const rect  = canvas.getBoundingClientRect();
+  const scaleX = canvas.width  / rect.width;
+  const scaleY = canvas.height / rect.height;
+  return {
+    x: (e.clientX - rect.left) * scaleX,
+    y: (e.clientY - rect.top)  * scaleY,
+  };
+}
+
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+let toastTimer = null;
+function showToast(msg, type) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast show' + (type ? ' ' + type : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+}
+</script>
+</body>
+</html>
