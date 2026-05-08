@@ -19,3 +19,9 @@ A fully client-side PDF toolkit that runs entirely in the browser. Supports merg
 
 [Launch PDF Studio]({{ "/projects/pdf-studio/" | relative_url }}){: .btn .btn-blue }
 
+## USCIS Photo Prep
+
+A browser-based portrait photo tool that auto-detects the face in an uploaded image and positions a 600×600 px crop to satisfy USCIS photo requirements — head covering 50–69% of the frame and horizontally centered. Drag and scroll to refine the crop, then download a compliant JPEG in one click. No photo ever leaves your device; all processing runs locally.
+
+[Launch USCIS Photo Prep]({{ "/projects/uscis-photo/" | relative_url }}){: .btn .btn-blue }
+
