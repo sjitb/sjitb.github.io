@@ -1,4 +1,5 @@
 source 'https://rubygems.org'
 
-gem "github-pages", "~> 232", group: :jekyll_plugins
-gem "just-the-docs", "~> 0.6"
+gem "jekyll", "~> 4.3"
+gem "just-the-docs", "~> 0.12"
+gem "webrick"
