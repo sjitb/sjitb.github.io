@@ -8,7 +8,7 @@ has_children: true
 
 <img src="/assets/images/about/profile.png" alt="Photo of Satrajit Basu" width="200" />
 
-I'm Satrajit, a software engineer with 12+ years of experience and a genuine obsession with building AI/ML systems that actually work in the messy, high-stakes environments of the real world.
+I'm Satrajit, a software engineer with 14+ years of experience specializing in architecting, scaling, and operationalizing AI/ML systems and cloud-native data platforms. I build distributed ML infrastructure, LLM orchestration pipelines (MCP, RAG), and agentic workflows — with a track record across life sciences and enterprise software.
 
 <div class="social-links">
   <a href="https://github.com/sjitb" title="GitHub">
