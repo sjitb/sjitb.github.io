@@ -380,8 +380,8 @@ nav_order: 30
     border-radius: 1px;
   }
 
-  .progress-bar-bg::before { left: 50%; }
-  .progress-bar-bg::after  { left: 69%; }
+  .progress-bar-bg::before { left: var(--min-pct, 50%); }
+  .progress-bar-bg::after  { left: var(--max-pct, 69%); }
 
   .progress-bar-fill {
     height: 100%;
@@ -395,6 +395,33 @@ nav_order: 30
     font-size: 10px;
     color: var(--muted);
     line-height: 1.5;
+  }
+
+  /* ─── SIZE SELECTOR ─── */
+  .size-toggle {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+
+  .size-option {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--muted);
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    padding: 8px 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .size-option:hover { border-color: var(--muted); color: var(--text); }
+
+  .size-option[aria-pressed="true"] {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+    color: var(--accent);
   }
 
   /* ─── OUTPUT SPECS ─── */
@@ -658,21 +685,25 @@ nav_order: 30
     <!-- Output spec -->
     <div class="sidebar-section">
       <div class="section-label">Output Spec</div>
+      <div class="size-toggle" role="group" aria-label="Photo size">
+        <button type="button" class="size-option" data-preset="us" aria-pressed="true">600 × 600</button>
+        <button type="button" class="size-option" data-preset="std" aria-pressed="false">630 × 810</button>
+      </div>
       <div class="specs-box">
         <div class="spec-item">
-          <div class="spec-value">600<span class="spec-unit">px</span></div>
-          <div class="spec-label">Width × Height</div>
+          <div class="spec-value" id="specSize"></div>
+          <div class="spec-label">Width × Height (px)</div>
         </div>
         <div class="spec-item">
-          <div class="spec-value">2<span class="spec-unit">"</span></div>
-          <div class="spec-label">At 300 DPI</div>
+          <div class="spec-value" id="specPrint"></div>
+          <div class="spec-label" id="specPrintLabel"></div>
         </div>
         <div class="spec-item">
-          <div class="spec-value">50<span class="spec-unit">%</span></div>
+          <div class="spec-value"><span id="specMin"></span><span class="spec-unit">%</span></div>
           <div class="spec-label">Min head height</div>
         </div>
         <div class="spec-item">
-          <div class="spec-value">69<span class="spec-unit">%</span></div>
+          <div class="spec-value"><span id="specMax"></span><span class="spec-unit">%</span></div>
           <div class="spec-label">Max head height</div>
         </div>
       </div>
@@ -684,7 +715,7 @@ nav_order: 30
       <input type="text" class="filename-input" id="filenameInput"
              value="passport-photo.jpg" aria-label="Output filename">
       <button class="cta-btn" id="exportBtn" disabled onclick="exportPhoto()">
-        ⬇&nbsp; Download 600×600 JPEG
+        ⬇&nbsp; <span id="exportLabel">Download 600×600 JPEG</span>
       </button>
     </div>
 
@@ -703,8 +734,8 @@ nav_order: 30
     <div class="sidebar-section">
       <div class="section-label">Passport Photo Requirements</div>
       <ul class="req-list">
-        <li><span class="req-dot"></span>2 × 2 inch square photograph</li>
-        <li><span class="req-dot"></span>Head covers 50–69% of frame height</li>
+        <li><span class="req-dot"></span><span id="reqSize"></span></li>
+        <li><span class="req-dot"></span><span id="reqHead"></span></li>
         <li><span class="req-dot"></span>Face centered horizontally</li>
         <li><span class="req-dot"></span>Plain white or off-white background</li>
         <li><span class="req-dot"></span>Head upright, facing directly forward</li>
@@ -721,7 +752,22 @@ nav_order: 30
 'use strict';
 
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
-const VP = 600;          // canvas internal resolution == output resolution
+// Canvas internal resolution == output resolution. headMin/headMax are head
+// height as a fraction of frame height; headTarget is used for auto-positioning.
+const PRESETS = {
+  us: {
+    w: 600, h: 600, headMin: 0.50, headMax: 0.69, headTarget: 0.60,
+    print: '2<span class="spec-unit">"</span>', printLabel: 'At 300 DPI',
+    reqSize: '2 × 2 inch square photograph',
+  },
+  std: {
+    w: 630, h: 810, headMin: 0.71, headMax: 0.80, headTarget: 0.755,
+    print: '35×45<span class="spec-unit">mm</span>', printLabel: 'Print size',
+    reqSize: '35 × 45 mm (630 × 810 px) photograph',
+  },
+};
+let preset = PRESETS.us;
+let VW = preset.w, VH = preset.h;
 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
 const FACE_TIMEOUT_MS = 9000;
 
@@ -764,6 +810,46 @@ const resetBtn    = document.getElementById('resetBtn');
 const howTo       = document.getElementById('howTo');
 const panelTitle  = document.getElementById('panelTitle');
 
+// ─── OUTPUT PRESET ───────────────────────────────────────────────────────────
+function applyPreset(key) {
+  preset = PRESETS[key];
+  VW = preset.w; VH = preset.h;
+  canvas.width = VW;
+  canvas.height = VH;
+
+  const minPct = Math.round(preset.headMin * 100);
+  const maxPct = Math.round(preset.headMax * 100);
+  document.getElementById('specSize').textContent = VW + '×' + VH;
+  document.getElementById('specPrint').innerHTML = preset.print;
+  document.getElementById('specPrintLabel').textContent = preset.printLabel;
+  document.getElementById('specMin').textContent = minPct;
+  document.getElementById('specMax').textContent = maxPct;
+  document.getElementById('reqSize').textContent = preset.reqSize;
+  document.getElementById('reqHead').textContent = `Head covers ${minPct}–${maxPct}% of frame height`;
+  document.getElementById('exportLabel').textContent = `Download ${VW}×${VH} JPEG`;
+  headSizeBar.parentElement.style.setProperty('--min-pct', minPct + '%');
+  headSizeBar.parentElement.style.setProperty('--max-pct', maxPct + '%');
+
+  document.querySelectorAll('.size-option').forEach(btn =>
+    btn.setAttribute('aria-pressed', String(btn.dataset.preset === key)));
+
+  if (img) {
+    if (headHeight_img !== null) {
+      autoPosition();
+    } else {
+      zoom = Math.min(VW / img.naturalWidth, VH / img.naturalHeight);
+      panX = 0; panY = 0;
+    }
+  }
+  renderCanvas();
+  updateCompliance();
+}
+
+document.querySelectorAll('.size-option').forEach(btn =>
+  btn.addEventListener('click', () => applyPreset(btn.dataset.preset)));
+
+applyPreset('us');
+
 // ─── IMAGE UPLOAD ─────────────────────────────────────────────────────────────
 dropZoneEl.addEventListener('click', () => fileInput.click());
 dropZoneEl.addEventListener('keydown', e => {
@@ -805,8 +891,8 @@ function enterCropMode() {
   panelTitle.innerHTML = 'Align face inside the <em>oval guide</em>';
   exportBtn.disabled = false;
 
-  // Fit entire image inside VP on first load
-  zoom = Math.min(VP / img.naturalWidth, VP / img.naturalHeight);
+  // Fit entire image inside the canvas on first load
+  zoom = Math.min(VW / img.naturalWidth, VH / img.naturalHeight);
   panX = 0;
   panY = 0;
   headHeight_img = null;
@@ -837,6 +923,13 @@ function resetTool() {
 }
 
 // ─── FACE DETECTION ──────────────────────────────────────────────────────────
+// Scale and center the image so the detected head fills the preset's target height
+function autoPosition() {
+  zoom = (VH * preset.headTarget) / headHeight_img;
+  panX = -(faceCenterX_img - img.naturalWidth  / 2) * zoom;
+  panY = -(faceCenterY_img - img.naturalHeight / 2) * zoom;
+}
+
 async function runFaceDetection() {
   if (!faceDetectionEnabled) {
     showBanner('no-face', '⚠ Face detection unavailable. Use the oval guide to position manually.');
@@ -875,11 +968,7 @@ async function runFaceDetection() {
     faceCenterX_img = x + width / 2;
     faceCenterY_img = (crownY + chinY) / 2;
 
-    // Auto-position: head occupies 60% of VP height, face centered
-    const targetHeadPx = VP * 0.60;
-    zoom = targetHeadPx / headHeight_img;
-    panX = -(faceCenterX_img - img.naturalWidth  / 2) * zoom;
-    panY = -(faceCenterY_img - img.naturalHeight / 2) * zoom;
+    autoPosition();
 
     renderCanvas();
     updateCompliance();
@@ -926,25 +1015,25 @@ function hideBanner() {
 
 // ─── CANVAS RENDERING ────────────────────────────────────────────────────────
 function renderCanvas() {
-  ctx.clearRect(0, 0, VP, VP);
+  ctx.clearRect(0, 0, VW, VH);
   if (!img) return;
 
   // Draw image
   ctx.save();
-  ctx.translate(VP / 2 + panX, VP / 2 + panY);
+  ctx.translate(VW / 2 + panX, VH / 2 + panY);
   ctx.scale(zoom, zoom);
   ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
   ctx.restore();
 
-  // Oval guide parameters (centered, 60% tall)
-  const cx = VP / 2, cy = VP / 2;
-  const ry = VP * 0.30;       // radius = 30% → diameter = 60% of VP
+  // Oval guide parameters (centered, height = preset target head fraction)
+  const cx = VW / 2, cy = VH / 2;
+  const ry = VH * preset.headTarget / 2;
   const rx = ry * 0.735;      // typical head aspect ratio (height ≈ 1.36× width)
 
   // Darken area outside oval (even-odd fill rule punches oval hole)
   ctx.save();
   ctx.beginPath();
-  ctx.rect(0, 0, VP, VP);
+  ctx.rect(0, 0, VW, VH);
   ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
   ctx.fillStyle = 'rgba(0,0,0,0.42)';
   ctx.fill('evenodd');
@@ -961,17 +1050,16 @@ function renderCanvas() {
   ctx.setLineDash([]);
   ctx.restore();
 
-  // Compliance zone reference lines:
-  //   50% head centered → crown at 25%, chin at 75%
-  //   69% head centered → crown at 15.5%, chin at 84.5%
+  // Compliance zone reference lines for a vertically centered head at min/max height
   ctx.save();
   ctx.strokeStyle = 'rgba(200,245,90,0.20)';
   ctx.lineWidth = 1;
   ctx.setLineDash([4, 7]);
-  [0.25, 0.75, 0.155, 0.845].forEach(frac => {
-    const y = frac * VP;
+  const lo = (1 - preset.headMin) / 2, hi = (1 - preset.headMax) / 2;
+  [hi, lo, 1 - lo, 1 - hi].forEach(frac => {
+    const y = frac * VH;
     ctx.beginPath();
-    ctx.moveTo(0, y); ctx.lineTo(VP, y);
+    ctx.moveTo(0, y); ctx.lineTo(VW, y);
     ctx.stroke();
   });
   ctx.setLineDash([]);
@@ -982,7 +1070,7 @@ function renderCanvas() {
   ctx.strokeStyle = 'rgba(200,245,90,0.55)';
   ctx.lineWidth = 2;
   const cl = 22;
-  [[0, 0], [VP, 0], [VP, VP], [0, VP]].forEach(([bx, by]) => {
+  [[0, 0], [VW, 0], [VW, VH], [0, VH]].forEach(([bx, by]) => {
     const dx = bx === 0 ? 1 : -1;
     const dy = by === 0 ? 1 : -1;
     ctx.beginPath();
@@ -1010,27 +1098,29 @@ function updateCompliance() {
     return;
   }
 
-  // Head height as a fraction of the 600 px output
-  const headFrac = (headHeight_img * zoom) / VP;
+  // Head height as a fraction of the output height
+  const { headMin, headMax } = preset;
+  const headFrac = (headHeight_img * zoom) / VH;
   const headPct  = Math.round(headFrac * 100);
-  const pass  = headFrac >= 0.50 && headFrac <= 0.69;
-  const close = headFrac >= 0.44 && headFrac <= 0.75;
+  const pass  = headFrac >= headMin && headFrac <= headMax;
+  const close = headFrac >= headMin - 0.06 && headFrac <= headMax + 0.06;
+  const minPct = Math.round(headMin * 100), maxPct = Math.round(headMax * 100);
 
   headSizeVal.textContent = headPct + '%';
   headSizeVal.className = 'c-value ' + (pass ? 'pass' : close ? 'warn' : 'fail');
   headSizeBar.style.width = clamp(headFrac * 100, 0, 100) + '%';
   headSizeBar.style.background = pass ? 'var(--accent)' : close ? 'var(--warn)' : 'var(--danger)';
 
-  if (headFrac < 0.50)      headSizeTip.textContent = 'Zoom in — head too small (need \u226550%)';
-  else if (headFrac > 0.69) headSizeTip.textContent = 'Zoom out — head too large (need \u226469%)';
-  else                      headSizeTip.textContent = '\u2713 Head size within passport photo range (50\u201369%)';
+  if (headFrac < headMin)      headSizeTip.textContent = `Zoom in — head too small (need \u2265${minPct}%)`;
+  else if (headFrac > headMax) headSizeTip.textContent = `Zoom out — head too large (need \u2264${maxPct}%)`;
+  else                         headSizeTip.textContent = `\u2713 Head size within passport photo range (${minPct}\u2013${maxPct}%)`;
 
   // Horizontal centering: face center X offset from canvas center
-  const faceCX_vp  = VP / 2 + panX + (faceCenterX_img - img.naturalWidth / 2) * zoom;
-  const offsetPx   = Math.round(faceCX_vp - VP / 2);
+  const faceCX_vp  = VW / 2 + panX + (faceCenterX_img - img.naturalWidth / 2) * zoom;
+  const offsetPx   = Math.round(faceCX_vp - VW / 2);
   const absOffset  = Math.abs(offsetPx);
-  const cPass  = absOffset <= 20;
-  const cClose = absOffset <= 50;
+  const cPass  = absOffset <= VW * 0.033;
+  const cClose = absOffset <= VW * 0.083;
 
   const sign = offsetPx > 0 ? '+' : '';
   centerVal.textContent = cPass ? 'centered' : sign + offsetPx + 'px';
@@ -1072,8 +1162,8 @@ canvas.addEventListener('wheel', e => {
   const realFact = newZoom / zoom;
 
   // Zoom around cursor position
-  panX = (p.x - VP / 2) * (1 - realFact) + panX * realFact;
-  panY = (p.y - VP / 2) * (1 - realFact) + panY * realFact;
+  panX = (p.x - VW / 2) * (1 - realFact) + panX * realFact;
+  panY = (p.y - VH / 2) * (1 - realFact) + panY * realFact;
   zoom = newZoom;
 
   renderCanvas();
@@ -1114,12 +1204,12 @@ function exportPhoto() {
   if (!img) return;
 
   const out  = document.createElement('canvas');
-  out.width  = VP;
-  out.height = VP;
+  out.width  = VW;
+  out.height = VH;
   const octx = out.getContext('2d');
 
-  // Identical transform to the crop canvas (already in VP=600 space)
-  octx.translate(VP / 2 + panX, VP / 2 + panY);
+  // Identical transform to the crop canvas (already in output pixel space)
+  octx.translate(VW / 2 + panX, VH / 2 + panY);
   octx.scale(zoom, zoom);
   octx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
 
