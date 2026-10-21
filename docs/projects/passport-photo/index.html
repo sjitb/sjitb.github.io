@@ -404,6 +404,16 @@ nav_order: 30
     margin-bottom: 12px;
   }
 
+  .size-toggle.limit-toggle { grid-template-columns: repeat(3, 1fr); }
+
+  .export-hint {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    margin: -4px 0 12px;
+    line-height: 1.5;
+  }
+
   .size-option {
     background: var(--surface2);
     border: 1px solid var(--border);
@@ -712,6 +722,14 @@ nav_order: 30
     <!-- Export -->
     <div class="sidebar-section">
       <div class="section-label">Export</div>
+      <div class="size-toggle limit-toggle" role="group" aria-label="Maximum file size">
+        <button type="button" class="size-option" data-limit="250" aria-pressed="false">250 KB</button>
+        <button type="button" class="size-option" data-limit="500" aria-pressed="false">500 KB</button>
+        <button type="button" class="size-option" data-limit="1024" aria-pressed="false">1 MB</button>
+        <button type="button" class="size-option" data-limit="2048" aria-pressed="false">2 MB</button>
+        <button type="button" class="size-option" data-limit="0" aria-pressed="true" style="grid-column: span 2">Original quality</button>
+      </div>
+      <div class="export-hint" id="limitHint">Highest JPEG quality (95%)</div>
       <input type="text" class="filename-input" id="filenameInput"
              value="passport-photo.jpg" aria-label="Output filename">
       <button class="cta-btn" id="exportBtn" disabled onclick="exportPhoto()">
@@ -770,6 +788,9 @@ let preset = PRESETS.us;
 let VW = preset.w, VH = preset.h;
 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
 const FACE_TIMEOUT_MS = 9000;
+const MAX_QUALITY = 0.95;
+const MIN_QUALITY = 0.30;
+let maxSizeKB = 0;       // 0 = original quality (no size limit)
 
 // ─── STATE ───────────────────────────────────────────────────────────────────
 let img = null;
@@ -830,7 +851,7 @@ function applyPreset(key) {
   headSizeBar.parentElement.style.setProperty('--min-pct', minPct + '%');
   headSizeBar.parentElement.style.setProperty('--max-pct', maxPct + '%');
 
-  document.querySelectorAll('.size-option').forEach(btn =>
+  document.querySelectorAll('[data-preset]').forEach(btn =>
     btn.setAttribute('aria-pressed', String(btn.dataset.preset === key)));
 
   if (img) {
@@ -845,7 +866,7 @@ function applyPreset(key) {
   updateCompliance();
 }
 
-document.querySelectorAll('.size-option').forEach(btn =>
+document.querySelectorAll('[data-preset]').forEach(btn =>
   btn.addEventListener('click', () => applyPreset(btn.dataset.preset)));
 
 applyPreset('us');
@@ -1200,30 +1221,84 @@ canvas.addEventListener('touchmove', e => {
 canvas.addEventListener('touchend', () => { touchState = null; });
 
 // ─── EXPORT ──────────────────────────────────────────────────────────────────
-function exportPhoto() {
-  if (!img) return;
+function toJpegBlob(cvs, quality) {
+  return new Promise(resolve => cvs.toBlob(resolve, 'image/jpeg', quality));
+}
 
-  const out  = document.createElement('canvas');
-  out.width  = VW;
-  out.height = VH;
-  const octx = out.getContext('2d');
+// Returns the highest-quality JPEG that fits maxBytes; `fits` is false when even
+// MIN_QUALITY is too large (the MIN_QUALITY blob is returned in that case).
+async function encodeJpeg(cvs, maxBytes) {
+  let best = await toJpegBlob(cvs, MAX_QUALITY);
+  if (!maxBytes || best.size <= maxBytes) return { blob: best, quality: MAX_QUALITY, fits: true };
 
-  // Identical transform to the crop canvas (already in output pixel space)
-  octx.translate(VW / 2 + panX, VH / 2 + panY);
-  octx.scale(zoom, zoom);
-  octx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
+  const lowest = await toJpegBlob(cvs, MIN_QUALITY);
+  if (lowest.size > maxBytes) return { blob: lowest, quality: MIN_QUALITY, fits: false };
 
-  const filename = document.getElementById('filenameInput').value.trim() || 'passport-photo.jpg';
+  let lo = MIN_QUALITY, hi = MAX_QUALITY, quality = MIN_QUALITY;
+  best = lowest;
+  for (let i = 0; i < 7; i++) {
+    const mid = (lo + hi) / 2;
+    const blob = await toJpegBlob(cvs, mid);
+    if (blob.size <= maxBytes) { best = blob; quality = mid; lo = mid; }
+    else hi = mid;
+  }
+  return { blob: best, quality, fits: true };
+}
 
-  out.toBlob(blob => {
+function formatSize(bytes) {
+  return bytes >= 1024 * 1024
+    ? (bytes / 1024 / 1024).toFixed(2) + ' MB'
+    : Math.round(bytes / 1024) + ' KB';
+}
+
+function updateLimitHint() {
+  document.getElementById('limitHint').textContent = maxSizeKB
+    ? `Quality is auto-tuned to stay under ${maxSizeKB >= 1024 ? maxSizeKB / 1024 + ' MB' : maxSizeKB + ' KB'}`
+    : 'Highest JPEG quality (95%)';
+}
+
+document.querySelectorAll('[data-limit]').forEach(btn =>
+  btn.addEventListener('click', () => {
+    maxSizeKB = Number(btn.dataset.limit);
+    document.querySelectorAll('[data-limit]').forEach(b =>
+      b.setAttribute('aria-pressed', String(b === btn)));
+    updateLimitHint();
+  }));
+
+async function exportPhoto() {
+  if (!img || exportBtn.dataset.busy) return;
+  exportBtn.dataset.busy = '1';
+  exportBtn.disabled = true;
+
+  try {
+    const out  = document.createElement('canvas');
+    out.width  = VW;
+    out.height = VH;
+    const octx = out.getContext('2d');
+
+    // Identical transform to the crop canvas (already in output pixel space)
+    octx.translate(VW / 2 + panX, VH / 2 + panY);
+    octx.scale(zoom, zoom);
+    octx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
+
+    const filename = document.getElementById('filenameInput').value.trim() || 'passport-photo.jpg';
+    const { blob, fits } = await encodeJpeg(out, maxSizeKB * 1024);
+
     const url = URL.createObjectURL(blob);
     const a   = document.createElement('a');
     a.href     = url;
     a.download = filename;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
-    showToast('Photo downloaded!', 'success');
-  }, 'image/jpeg', 0.95);
+
+    if (fits) showToast(`Photo downloaded! ${formatSize(blob.size)}`, 'success');
+    else showToast(`Can't reach ${maxSizeKB} KB — downloaded smallest (${formatSize(blob.size)})`, 'error');
+  } catch (err) {
+    showToast('Export failed', 'error');
+  } finally {
+    delete exportBtn.dataset.busy;
+    exportBtn.disabled = !img;
+  }
 }
 
 // ─── UTILITIES ───────────────────────────────────────────────────────────────
