@@ -796,13 +796,15 @@ const PRESETS = {
   us: {
     w: 600, h: 600, headMin: 0.50, headMax: 0.69, headTarget: 0.60,
     cellW: 600, cellH: 600,   // printed size on the 4x6 sheet at 300 DPI
+    dpi: 300,
     print: '2<span class="spec-unit">"</span>', printLabel: 'At 300 DPI',
     reqSize: '2 × 2 inch square photograph',
   },
   std: {
     w: 630, h: 810, headMin: 0.71, headMax: 0.80, headTarget: 0.755,
     cellW: 413, cellH: 531,
-    print: '35×45<span class="spec-unit">mm</span>', printLabel: 'Print size',
+    dpi: 457,   // 630 px across 35 mm
+    print: '35×45<span class="spec-unit">mm</span>', printLabel: 'At 457 DPI',
     reqSize: '35 × 45 mm (630 × 810 px) photograph',
   },
 };
@@ -1270,6 +1272,18 @@ async function encodeJpeg(cvs, maxBytes) {
   return { blob: best, quality, fits: true };
 }
 
+// Writes the print density into the JFIF header so the JPEG opens at its physical size
+async function setJpegDpi(blob, dpi) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const isJfif = bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF && bytes[3] === 0xE0 &&
+                 bytes[6] === 0x4A && bytes[7] === 0x46 && bytes[8] === 0x49 && bytes[9] === 0x46;
+  if (!isJfif) return blob;
+  bytes[13] = 1;                       // density units: dots per inch
+  bytes[14] = dpi >> 8; bytes[15] = dpi & 0xFF;
+  bytes[16] = dpi >> 8; bytes[17] = dpi & 0xFF;
+  return new Blob([bytes], { type: 'image/jpeg' });
+}
+
 function formatSize(bytes) {
   return bytes >= 1024 * 1024
     ? (bytes / 1024 / 1024).toFixed(2) + ' MB'
@@ -1348,7 +1362,9 @@ async function exportPhoto(asSheet = false) {
 
     let filename = document.getElementById('filenameInput').value.trim() || 'passport-photo.jpg';
     if (asSheet) filename = filename.replace(/(\.[^.]*)?$/, '-4x6$1');
-    const { blob, fits } = await encodeJpeg(asSheet ? buildSheet(out) : out, maxSizeKB * 1024);
+    const encoded = await encodeJpeg(asSheet ? buildSheet(out) : out, maxSizeKB * 1024);
+    const fits = encoded.fits;
+    const blob = await setJpegDpi(encoded.blob, asSheet ? 300 : preset.dpi);
 
     const url = URL.createObjectURL(blob);
     const a   = document.createElement('a');
