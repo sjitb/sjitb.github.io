@@ -510,6 +510,22 @@ nav_order: 30
     transform: none; box-shadow: none;
   }
 
+  .cta-btn.secondary {
+    margin-top: 10px;
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    font-size: 13px;
+  }
+
+  .cta-btn.secondary:hover { background: var(--accent-dim); box-shadow: none; }
+
+  .cta-btn.secondary:disabled {
+    background: transparent;
+    border-color: var(--border);
+    color: var(--muted);
+  }
+
   /* ─── PRIVACY BOX ─── */
   .privacy-info {
     background: var(--accent-dim);
@@ -735,6 +751,10 @@ nav_order: 30
       <button class="cta-btn" id="exportBtn" disabled onclick="exportPhoto()">
         ⬇&nbsp; <span id="exportLabel">Download 600×600 JPEG</span>
       </button>
+      <button class="cta-btn secondary" id="sheetBtn" disabled onclick="exportPhoto(true)">
+        🖨&nbsp; Download 4×6 print sheet (6 photos)
+      </button>
+      <div class="export-hint" style="margin:10px 0 0">1200×1800 px = 4×6 in at 300 DPI. Print at 100% / actual size.</div>
     </div>
 
     <!-- Privacy -->
@@ -775,11 +795,13 @@ nav_order: 30
 const PRESETS = {
   us: {
     w: 600, h: 600, headMin: 0.50, headMax: 0.69, headTarget: 0.60,
+    cellW: 600, cellH: 600,   // printed size on the 4x6 sheet at 300 DPI
     print: '2<span class="spec-unit">"</span>', printLabel: 'At 300 DPI',
     reqSize: '2 × 2 inch square photograph',
   },
   std: {
     w: 630, h: 810, headMin: 0.71, headMax: 0.80, headTarget: 0.755,
+    cellW: 413, cellH: 531,
     print: '35×45<span class="spec-unit">mm</span>', printLabel: 'Print size',
     reqSize: '35 × 45 mm (630 × 810 px) photograph',
   },
@@ -822,6 +844,7 @@ const fileInput   = document.getElementById('fileInput');
 const cropPanel   = document.getElementById('cropPanel');
 const banner      = document.getElementById('detectionBanner');
 const exportBtn   = document.getElementById('exportBtn');
+const sheetBtn    = document.getElementById('sheetBtn');
 const headSizeVal = document.getElementById('headSizeValue');
 const headSizeBar = document.getElementById('headSizeBar');
 const headSizeTip = document.getElementById('headSizeTip');
@@ -911,6 +934,7 @@ function enterCropMode() {
   howTo.style.display = '';
   panelTitle.innerHTML = 'Align face inside the <em>oval guide</em>';
   exportBtn.disabled = false;
+  sheetBtn.disabled = false;
 
   // Fit entire image inside the canvas on first load
   zoom = Math.min(VW / img.naturalWidth, VH / img.naturalHeight);
@@ -937,6 +961,7 @@ function resetTool() {
   howTo.style.display = 'none';
   panelTitle.innerHTML = 'Upload your <em>portrait photo</em>';
   exportBtn.disabled = true;
+  sheetBtn.disabled = true;
 
   hideBanner();
   fileInput.value = '';
@@ -1265,10 +1290,50 @@ document.querySelectorAll('[data-limit]').forEach(btn =>
     updateLimitHint();
   }));
 
-async function exportPhoto() {
+const SHEET_W = 1200, SHEET_H = 1800;   // 4x6 in at 300 DPI
+const SHEET_COLS = 2, SHEET_ROWS = 3;
+
+// Tile the finished photo into a centered grid on a white 4x6 sheet with thin cut guides
+function buildSheet(photo) {
+  const { cellW, cellH } = preset;
+  const sheet = document.createElement('canvas');
+  sheet.width = SHEET_W;
+  sheet.height = SHEET_H;
+  const sctx = sheet.getContext('2d');
+  sctx.fillStyle = '#fff';
+  sctx.fillRect(0, 0, SHEET_W, SHEET_H);
+  sctx.imageSmoothingQuality = 'high';
+
+  const gridW = cellW * SHEET_COLS, gridH = cellH * SHEET_ROWS;
+  const x0 = Math.round((SHEET_W - gridW) / 2);
+  const y0 = Math.round((SHEET_H - gridH) / 2);
+
+  for (let r = 0; r < SHEET_ROWS; r++) {
+    for (let c = 0; c < SHEET_COLS; c++) {
+      sctx.drawImage(photo, x0 + c * cellW, y0 + r * cellH, cellW, cellH);
+    }
+  }
+
+  sctx.strokeStyle = 'rgba(128,128,128,0.7)';
+  sctx.lineWidth = 1;
+  sctx.beginPath();
+  for (let c = 0; c <= SHEET_COLS; c++) {
+    const x = Math.min(x0 + c * cellW, SHEET_W - 1) + 0.5;
+    sctx.moveTo(x, 0); sctx.lineTo(x, SHEET_H);
+  }
+  for (let r = 0; r <= SHEET_ROWS; r++) {
+    const y = Math.min(y0 + r * cellH, SHEET_H - 1) + 0.5;
+    sctx.moveTo(0, y); sctx.lineTo(SHEET_W, y);
+  }
+  sctx.stroke();
+  return sheet;
+}
+
+async function exportPhoto(asSheet = false) {
   if (!img || exportBtn.dataset.busy) return;
   exportBtn.dataset.busy = '1';
   exportBtn.disabled = true;
+  sheetBtn.disabled = true;
 
   try {
     const out  = document.createElement('canvas');
@@ -1281,8 +1346,9 @@ async function exportPhoto() {
     octx.scale(zoom, zoom);
     octx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
 
-    const filename = document.getElementById('filenameInput').value.trim() || 'passport-photo.jpg';
-    const { blob, fits } = await encodeJpeg(out, maxSizeKB * 1024);
+    let filename = document.getElementById('filenameInput').value.trim() || 'passport-photo.jpg';
+    if (asSheet) filename = filename.replace(/(\.[^.]*)?$/, '-4x6$1');
+    const { blob, fits } = await encodeJpeg(asSheet ? buildSheet(out) : out, maxSizeKB * 1024);
 
     const url = URL.createObjectURL(blob);
     const a   = document.createElement('a');
@@ -1291,13 +1357,15 @@ async function exportPhoto() {
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
 
-    if (fits) showToast(`Photo downloaded! ${formatSize(blob.size)}`, 'success');
+    const what = asSheet ? '4×6 sheet' : 'Photo';
+    if (fits) showToast(`${what} downloaded! ${formatSize(blob.size)}`, 'success');
     else showToast(`Can't reach ${maxSizeKB} KB — downloaded smallest (${formatSize(blob.size)})`, 'error');
   } catch (err) {
     showToast('Export failed', 'error');
   } finally {
     delete exportBtn.dataset.busy;
     exportBtn.disabled = !img;
+    sheetBtn.disabled = !img;
   }
 }
 
